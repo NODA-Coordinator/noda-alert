@@ -7,7 +7,7 @@
 (function () {
 'use strict';
 var H = 3600e3, MIN = 60e3, DAY = 24 * H;
-var APP_VERSION = '2.3.0';
+var APP_VERSION = '2.4.0';
 var FIREBASE_DIR = './vendor/firebase/12.19.0/';
 var GAS = !!(window.google && google.script && google.script.run);
 var MODE = GAS ? 'gas' : (document.documentElement.getAttribute('data-app') === 'pwa' ? 'pwa' : 'none');
@@ -22,7 +22,14 @@ var DETAIL = {};                 // coordinator: one volunteer's hours and histo
 var LETTER = {};                 // coordinator: service letter {id, opts, data, loading, err}
 // UI.fix: the hours entry the coordinator is fixing (its id); UI.fixDraft / UI.fixErr: what was typed, what to fix.
 var INSTALL = { evt: null };
+var ROLES = { key: '', list: [], who: '', at: 0 };   // version 2.4: roles this person can switch between on this phone
+var ROLE_FETCH = false;
+var ROLE_SHORT = { vol: 'Volunteer', rn: 'Charge nurse', coord: 'Coordinator' };
+var ROLE_WORD = { vol: 'a volunteer', rn: 'a charge nurse', coord: 'the NODA coordinator' };
 var app = document.getElementById('app'), tabs = document.getElementById('tabs'), whoEl = document.getElementById('who');
+var rolesEl = document.createElement('div');
+rolesEl.id = 'roles'; rolesEl.className = 'roles'; rolesEl.hidden = true;
+tabs.parentNode.insertBefore(rolesEl, tabs);
 var toastTimer = null;
 
 /* ---------- helpers ---------- */
@@ -145,6 +152,7 @@ function afterLoad() {
     if (vigilById(id)) { if (ST.role === 'coord') TAB = 'vigils'; go({ name: 'vigil', id: id }); }
   }
   if (MODE === 'pwa' && Date.now() - PUSH.lastRefresh > 6 * H) pushRefresh();
+  if (MODE === 'pwa' && KEY && ST && ST.role !== 'none' && (ROLES.key !== KEY || Date.now() - ROLES.at > 15 * MIN)) fetchRoles();
 }
 
 /* ---------- data ---------- */
@@ -250,7 +258,7 @@ function signInView(reason) {
   var err = SIGN.err ? '<p class="err" role="alert">' + esc(SIGN.err) + '</p>' : '';
   if (SIGN.step === 'role') {
     return '<div class="head"><p class="eyebrow">Sign in</p><h2>Sign in as</h2></div>' +
-      '<div class="card paste"><p class="m0"><b>' + esc(SIGN.email) + '</b> is on more than one NODA list. Choose how to use NODA Alert on this phone. To switch later, sign out and sign in again.</p>' + err +
+      '<div class="card paste"><p class="m0"><b>' + esc(SIGN.email) + '</b> is on more than one NODA list. Choose how to use NODA Alert on this phone. You can switch any time at the top of the app.</p>' + err +
       '<div class="stack">' + (SIGN.choices || []).map(function (c) {
         return '<button type="button" class="btn primary big block" data-act="signin-role" data-role="' + esc(c.role) + '"' + dis + '>' + esc(c.label) + '</button>';
       }).join('') + '</div></div>' +
@@ -312,6 +320,7 @@ function checkCode(role) {
     if (r && r.choose) { SIGN.step = 'role'; SIGN.choices = r.choose; return; }
     if (!r || !r.key || !r.state || r.state.role === 'none') throw new Error('Couldn’t sign in. Ask for a new code and try again.');
     switchKey(r.key); ST = r.state; SIGN = { step: 'email' }; PASTE = {}; VIEW = { name: 'home' }; TAB = 'vigils'; UI = {};
+    rolesSave(r.roles, r.who);
     LS.del('signin');
     toast(signedInText(ST));
     afterLoad();
@@ -353,6 +362,7 @@ function trySignIn(text) {
   apiCall('getState', [], k).then(function (st) {
     if (!st || st.role === 'none') { PASTE.err = 'That link isn’t active. Ask your NODA coordinator for your current link.'; return; }
     switchKey(k); ST = st; PASTE = {}; SIGN = { step: 'email' }; VIEW = { name: 'home' }; TAB = 'vigils'; UI = {};
+    rolesClear();
     toast(signedInText(st));
     afterLoad();
   }, function (err) { PASTE.err = err && err.message ? err.message : 'Couldn’t check that link. Try again.'; })
@@ -373,13 +383,71 @@ function signOut() {
   var stop = s.on && s.id ? call('unregisterDevice', [s.id]).catch(function () {}).then(fcmUnregister) : Promise.resolve();
   BUSY = true; document.body.classList.add('busy');
   stop.then(function () {
-    LS.del('key'); LS.del('push');
+    LS.del('key'); LS.del('push'); rolesClear();
     clearTimeout(TEST.timer); TEST = {}; DETAIL = {}; LETTER = {};
     KEY = ''; ST = null; UI = {}; VIEW = { name: 'home' }; TAB = 'vigils'; PASTE = {};
     SIGN = { step: LS.get('signin') === 'link' ? 'paste' : 'email' };
     BUSY = false; document.body.classList.remove('busy');
     render(); toast('Signed out of this phone.');
   });
+}
+
+/* ---------- phone app: switch roles (version 2.4) ---------- */
+// Someone on more than one list (Volunteers, Charge nurses, Coordinator email) switches roles with one tap.
+// The server offers only the roles their email has right now. `who` is the server's signed note of that
+// email: a coordinator's key is shared, so the note is how a coordinator can switch too.
+function rolesLoad() {
+  try {
+    var r = JSON.parse(LS.get('roles') || 'null');
+    if (r && Array.isArray(r.list)) ROLES = { key: String(r.key || ''), list: r.list, who: String(r.who || ''), at: +r.at || 0 };
+  } catch (e) { /* start without */ }
+}
+function rolesSave(list, who) {
+  list = (Array.isArray(list) ? list : []).filter(function (r) { return r && /^(vol|rn|coord)$/.test(r.role); })
+    .map(function (r) { return { role: r.role }; });
+  ROLES = { key: KEY, list: list, who: String(who || ''), at: Date.now() };
+  LS.set('roles', JSON.stringify(ROLES));
+}
+function rolesClear() { ROLES = { key: '', list: [], who: '', at: 0 }; LS.del('roles'); }
+function fetchRoles() {
+  if (MODE !== 'pwa' || !KEY || ROLE_FETCH) return;
+  var k = KEY;
+  ROLE_FETCH = true;
+  apiCall('myRoles', [ROLES.who], k).then(function (r) {
+    if (k !== KEY) return;   // switched or signed out meanwhile
+    var before = JSON.stringify(ROLES.list);
+    // Keep the note when the server can't make a new one (a coordinator who signed in with a link).
+    rolesSave(r && r.roles, (r && r.who) || ROLES.who);
+    if (JSON.stringify(ROLES.list) !== before && !editing()) render();
+  }, function (err) {
+    // An older Code.gs has no role switch: show none, and don't ask again until the app restarts.
+    if (k === KEY && /Unknown action/.test((err && err.message) || '')) { ROLES.key = KEY; ROLES.list = []; ROLES.at = Date.now() + 365 * DAY; }
+  }).then(function () { ROLE_FETCH = false; });
+}
+function roleSwitchHTML() {
+  if (MODE !== 'pwa' || !KEY || !ST || ST.role === 'none' || ROLES.key !== KEY || ROLES.list.length < 2) return '';
+  return '<span class="roles-label" id="roles-label">Use NODA as</span>' +
+    '<div class="roles-seg" role="group" aria-labelledby="roles-label">' + ROLES.list.map(function (r) {
+      return '<button type="button" class="rolebtn" data-act="role-switch" data-role="' + esc(r.role) + '" aria-pressed="' + (r.role === ST.role) + '"' +
+        (BUSY ? ' disabled' : '') + '>' + esc(ROLE_SHORT[r.role]) + '</button>';
+    }).join('') + '</div>';
+}
+function switchRoleTo(role) {
+  if (BUSY || !ST || !KEY || role === ST.role) return;
+  var k = KEY;
+  BUSY = true; document.body.classList.add('busy'); render();
+  apiCall('switchRole', [ROLES.who, role], k).then(function (r) {
+    if (!r || !r.key || !r.state || r.state.role === 'none') throw new Error('Couldn’t switch. Try again.');
+    switchKey(r.key);   // moves this phone's notifications to the new role
+    ST = r.state; rolesSave(r.roles, r.who || ROLES.who);
+    VIEW = { name: 'home' }; TAB = 'vigils'; UI = {}; DETAIL = {}; LETTER = {}; DRAFT = null;
+    clearTimeout(TEST.timer); TEST = {};
+    toast('You’re using NODA as ' + ROLE_WORD[ST.role] + '.');
+    afterLoad();
+  }, function (err) {
+    toast((err && err.message) || 'Couldn’t switch. Try again.');
+    ROLES.at = 0; fetchRoles();
+  }).then(function () { BUSY = false; document.body.classList.remove('busy'); render(); window.scrollTo(0, 0); });
 }
 
 /* ---------- phone app: install on the home screen ---------- */
@@ -673,7 +741,7 @@ function pushTurnOff() {
 // and notice if notifications were turned off in the phone's settings.
 function pushRefresh() {
   var s = pushSaved();
-  if (MODE !== 'pwa' || PUSH.refreshing || PUSH.busy || !s.on || !KEY || !ST) return;
+  if (MODE !== 'pwa' || PUSH.refreshing || PUSH.busy || !s.on || !KEY || !ST || ST.role === 'rn') return;
   var st = pushState();
   if (st === 'unconfigured' || st === 'na' || st === 'ios-install' || st === 'ios-old' || st === 'unsupported') return;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
@@ -1315,6 +1383,8 @@ function viewLinks() {
 
 /* ---------- render ---------- */
 function render() {
+  var rs = roleSwitchHTML();
+  rolesEl.innerHTML = rs; rolesEl.hidden = !rs;
   if (MODE === 'pwa' && !KEY) { whoEl.textContent = 'Sign in'; tabs.hidden = true; app.innerHTML = signInView(); return; }
   if (!ST) return;
   if (ST.role === 'none') { whoEl.textContent = MODE === 'pwa' ? 'Sign in' : 'Link not active'; tabs.hidden = true; app.innerHTML = noneView(); return; }
@@ -1431,7 +1501,8 @@ var ACT = {
   'letter-email': function (el) { var o = readLetterForm(); LETTER.opts = o; act('emailLetter', [el.getAttribute('data-id'), o]); },
   'signout-ask': function () { UI.confirmSignOut = true; render(); },
   'signout-cancel': function () { UI.confirmSignOut = false; render(); },
-  signout: function () { signOut(); }
+  signout: function () { signOut(); },
+  'role-switch': function (el) { switchRoleTo(el.getAttribute('data-role')); }
 };
 app.addEventListener('click', function (e) {
   var el = e.target.closest('[data-act]'); if (!el || el.disabled) return;
@@ -1439,6 +1510,10 @@ app.addEventListener('click', function (e) {
 });
 tabs.addEventListener('click', function (e) {
   var el = e.target.closest('[data-act]'); if (el) ACT.tab(el);
+});
+rolesEl.addEventListener('click', function (e) {
+  var el = e.target.closest('[data-act]'); if (!el || el.disabled) return;
+  var fn = ACT[el.getAttribute('data-act')]; if (fn) fn(el);
 });
 app.addEventListener('change', function (e) {
   var t = e.target;
@@ -1546,6 +1621,7 @@ function startPWA() {
   DEEP = u.vigil || null;
   if (u.key) switchKey(u.key); else KEY = cleanKey(LS.get('key'));
   if (KEY.length < 16) KEY = '';
+  rolesLoad();
   // Sign-in starts with email, unless this server said email sign-in is off (then: paste a link).
   SIGN = { step: LS.get('signin') === 'link' ? 'paste' : 'email' };
   if (!KEY) { render(); return; }
