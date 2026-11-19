@@ -190,6 +190,8 @@ a.btn{text-decoration:none}
 /* Notifications card */
 .notif{display:grid;gap:10px;margin-top:10px}
 .notif.on{border-color:var(--ok)}
+.notif.need{border-color:var(--candle);background:var(--candle-soft)}
+.notif.need b{color:var(--candle-ink)}
 .notif .row{align-items:flex-start;flex-wrap:nowrap}
 .notif .row>span{flex:1;min-width:0}
 .notif .row>.chip{flex:none}

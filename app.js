@@ -7,7 +7,7 @@
 (function () {
 'use strict';
 var H = 3600e3, MIN = 60e3, DAY = 24 * H;
-var APP_VERSION = '2.4.1';
+var APP_VERSION = '2.5.0';
 var FIREBASE_DIR = './vendor/firebase/12.19.0/';
 var GAS = !!(window.google && google.script && google.script.run);
 var MODE = GAS ? 'gas' : (document.documentElement.getAttribute('data-app') === 'pwa' ? 'pwa' : 'none');
@@ -425,6 +425,11 @@ function fetchRoles() {
     if (k === KEY && /Unknown action/.test((err && err.message) || '')) { ROLES.key = KEY; ROLES.list = []; ROLES.at = Date.now() + 365 * DAY; }
   }).then(function () { ROLE_FETCH = false; });
 }
+// Version 2.5: alerts go to phones only (Alert emails Off on the Settings tab). Older servers leave alertEmails out.
+function appOnly() { return !!(ST && ST.alertEmails === false); }
+// How many on-call volunteers a page reaches: with alerts by app only, those with a phone getting NODA notifications.
+function reachN() { return ST.reach !== undefined ? ST.reach : ST.onCall; }
+function hasRole(role) { return ROLES.key === KEY && ROLES.list.some(function (r) { return r.role === role; }); }
 function roleSwitchHTML() {
   if (MODE !== 'pwa' || !KEY || !ST || ST.role === 'none' || ROLES.key !== KEY || ROLES.list.length < 2) return '';
   return '<span class="roles-label" id="roles-label">Use NODA as</span>' +
@@ -490,7 +495,7 @@ function installBanner() {
 // Apps Script version: point people to the phone app once its address is on the Settings tab.
 function getAppCard() {
   if (MODE !== 'gas' || !ST || !ST.appUrl || ST.role === 'none' || !KEY) return '';
-  return '<div class="getapp"><span><b>NODA Alert has a phone app</b>' + (ST.push && ST.role !== 'rn' ? 'It can show pages as notifications.' : 'It opens like an app from your home screen.') + '</span>' +
+  return '<div class="getapp"><span><b>NODA Alert has a phone app</b>' + (appOnly() && ST.role === 'vol' ? 'NODA pages come only through the phone app.' : ST.push && ST.role !== 'rn' ? 'It can show pages as notifications.' : 'It opens like an app from your home screen.') + '</span>' +
     '<a class="btn small primary" href="' + esc(ST.appUrl + '#k=' + KEY) + '" target="_top" rel="noopener">Open the phone app</a></div>';
 }
 function deviceCard() {
@@ -528,7 +533,9 @@ function notifCard() {
   var coord = ST.role === 'coord';
   var what = coord ? 'vigil updates' : 'pages';
   // Said only when it's true: a volunteer who turned alert emails off gets pages on their other phone, not by email.
-  var until = coord || ST.me.pageEmail ? ' Until then, ' + what + ' come by email.' : '';
+  var until = appOnly() ? ' Until then, NODA can’t send ' + what + ' to this phone.' : coord || ST.me.pageEmail ? ' Until then, ' + what + ' come by email.' : '';
+  // With alerts by app only, a volunteer with no phone getting notifications gets no pages: the card says so in color.
+  var need = appOnly() && !coord && s !== 'on' && !ST.me.devices;
   var head, sub, chip = '', acts = '', extra = '';
   var dis = PUSH.busy ? ' disabled' : '';
   if (s === 'unconfigured') {
@@ -557,18 +564,19 @@ function notifCard() {
     head = 'Notifications are on';
     chip = '<span class="chip on">On</span>';
     // Volunteers: the Available switch above and Email me alerts too below already say where alerts go.
-    sub = coord ? 'Vigil updates come to this phone and by email.' : '';
+    sub = coord ? 'Vigil updates come to this phone' + (appOnly() ? '.' : ' and by email.') : '';
     acts = '<button type="button" class="btn small" data-act="push-test"' + dis + (TEST.waiting ? ' disabled' : '') + '>Send a test</button><button type="button" class="btn small quiet" data-act="push-off"' + dis + '>Turn off</button>';
     extra = testLine() + (coord ? '' : pageEmailBlock());
   } else {
-    head = coord ? 'Get vigil updates on this phone' : 'Get pages on this phone';
+    head = coord ? 'Get vigil updates on this phone' : !appOnly() ? 'Get pages on this phone' : ST.me.devices ? 'Get pages on this phone too' : 'Turn on notifications to get pages';
     chip = '<span class="chip off">Off</span>';
-    sub = 'Get ' + what + ' right away, even when the app is closed.' +
+    sub = appOnly() ? 'NODA sends ' + what + ' to the app, not by email.'
+      : 'Get ' + what + ' right away, even when the app is closed.' +
       (!coord && ST.me.appFirst && ST.me.pageEmail && ST.me.receiptsOk ? ' After a test, they come here instead of by email.' : '');
     acts = '<button type="button" class="btn primary" data-act="push-on"' + dis + '>' + (PUSH.busy ? 'Turning on…' : 'Turn on notifications') + '</button>';
   }
   if (PUSH.busy && s === 'on') acts = '<span class="hint m0">Working…</span>';
-  return '<section class="card notif' + (s === 'on' ? ' on' : '') + '" id="notif" aria-live="polite">' +
+  return '<section class="card notif' + (s === 'on' ? ' on' : need ? ' need' : '') + '" id="notif" aria-live="polite">' +
     '<div class="row"><span><b>' + head + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</span>' + chip + '</div>' +
     (PUSH.err ? '<p class="err" role="alert">' + esc(PUSH.err) + '</p>' : '') +
     (acts ? '<div class="acts">' + acts + '</div>' : '') + extra + '</section>';
@@ -593,6 +601,8 @@ function testLine() {
 function pageEmailBlock() {
   var me = ST.me;
   var any = (me.phones || []).some(function (p) { return p.tested; });
+  // Version 2.5: no alert emails to choose; a test shows pages will reach this phone.
+  if (appOnly()) return any ? '' : '<p class="hint m0">Send a test to make sure pages reach this phone.</p>';
   if (!any) {
     return '<p class="hint m0">' + (!me.receiptsOk
       ? 'Alert emails stay on until your coordinator finishes setup.'
@@ -780,11 +790,14 @@ function rnHome() {
   var avail = active.reduce(function (n, v) { return n + stats(v, now).open12; }, 0);
   var overview = ST.role === 'coord'
     ? '<div class="stats overview"><div><b>' + active.length + '</b><span>' + (active.length === 1 ? 'active vigil' : 'active vigils') + '</span></div>' +
-      '<div><b>' + avail + '</b><span>available hours, next 12 h</span></div><div><b>' + ST.onCall + '</b><span>on call</span></div></div>' : '';
+      '<div><b>' + avail + '</b><span>available hours, next 12 h</span></div><div><b>' + reachN() + '</b><span>' + (appOnly() ? 'can get pages' : 'on call') + '</span></div></div>' : '';
   return installBanner() + getAppCard() +
     '<div class="head"><h2>NODA vigils</h2></div>' + overview +
     (ST.units.length ? '<button type="button" class="btn primary big block" data-act="new">Request a NODA volunteer</button>' : '<p class="note">Add at least one unit on the Units tab of the Sheet before paging.</p>') +
-    (ST.role === 'rn' ? '<p class="hint">' + plural(ST.onCall, 'volunteer is', 'volunteers are') + ' on call.</p>' : '') +
+    (appOnly() && !reachN() ? '<p class="note">No volunteers have NODA notifications on yet, so a page won’t reach anyone.</p>'
+      : ST.role === 'rn' ? '<p class="hint">' + plural(reachN(), 'volunteer is', 'volunteers are') + ' on call.</p>' : '') +
+    // A phone gets pages only while NODA is in Volunteer mode on it (version 2.5, when email doesn't back them up).
+    (appOnly() && MODE === 'pwa' && hasRole('vol') ? '<p class="hint">You get NODA pages on this phone only in Volunteer mode.</p>' : '') +
     '<h3 class="sec">Active now</h3>' +
     (active.length ? '<div class="stack">' + active.map(function (v) { return vigilCard(v, 'rn', now); }).join('') + '</div>' : '<p class="empty">No active vigils.</p>') +
     (ended.length ? '<h3 class="sec">Ended in the last day</h3><div class="stack">' + ended.map(function (v) { return vigilCard(v, 'rn', now); }).join('') + '</div>' : '') +
@@ -822,7 +835,7 @@ function rnRequest() {
         '<p class="hint" id="cov-sum">' + esc(covLine(d)) + '</p>' +
       '</fieldset>' +
       '<p class="note">The page has no patient details. Share those in person at check-in.</p>' +
-      '<button type="submit" class="btn primary big block" id="send"' + (ok ? '' : ' disabled') + '>Page ' + plural(ST.onCall, 'on-call volunteer') + '</button>' +
+      '<button type="submit" class="btn primary big block" id="send"' + (ok ? '' : ' disabled') + '>Page ' + plural(reachN(), 'on-call volunteer') + '</button>' +
       '<p class="hint" id="why"' + (ok ? ' hidden' : '') + '>Check one item in each list and confirm permission to send.</p>' +
     '</form>';
 }
@@ -919,9 +932,12 @@ function volHome() {
   var needs = ST.vigils.filter(function (v) { return v.status === 'active' && stats(v, now).open > 0; }).reverse();
   var mine = myShifts(now);
   var on = pushState() === 'on';
-  var by = !ST.me.pageEmail ? 'Alerts come to your phone only.' : on ? 'Alerts come to your phone and by email.' : 'Alerts come by email.';
+  var by = appOnly()
+    ? (on ? 'Pages come to this phone.' : ST.me.devices ? 'Pages go to the phone where you turned on notifications.'
+      : 'Pages can’t reach you yet.' + (MODE === 'pwa' ? '' : ' Turn on notifications in the phone app.'))
+    : !ST.me.pageEmail ? 'Alerts come to your phone only.' : on ? 'Alerts come to your phone and by email.' : 'Alerts come by email.';
   // Alert emails are off but this phone isn't the one getting notifications: say so, with a way back.
-  var peNote = !ST.me.pageEmail && !on
+  var peNote = !appOnly() && !ST.me.pageEmail && !on
     ? '<div class="note row"><span>Alert emails are off, so pages and reminders go only to the phone where you turned notifications on.</span><button type="button" class="btn small" data-act="pe-on">Email me alerts too</button></div>' : '';
   return installBanner() + getAppCard() +
     '<div class="head"><h2>NODA vigils</h2></div>' +
@@ -1136,6 +1152,7 @@ function viewVols() {
       : 'Email invite sends the app’s address and how to sign in with an email code.') + '</p>';
 }
 function appText(v) {
+  if (appOnly()) return v.devices ? ' · app notifications on' + (v.tested ? ' (tested)' : '') : v.onCall ? ' · <b class="flag">no app yet: gets no pages</b>' : '';
   if (!v.devices) return '';
   return ' · app notifications on' + (v.tested ? ' (tested)' : '') + (v.pageEmail ? '' : ' · alert emails off');
 }
@@ -1153,7 +1170,7 @@ function volDetail(v) {
   var first = v.name.split(' ')[0];
   var hist = d.data ? histList(d.data.history, true) : d.err ? '<p class="err">' + esc(d.err) + '</p>' : '<p class="empty">Loading…</p>';
   var form = UI.addHours ? hoursForm('addhours', 'Add hours for ' + first, '') : '';
-  var pe = !v.pageEmail
+  var pe = !appOnly() && !v.pageEmail
     ? '<div class="row"><span>Their phone confirms each alert it gets.</span><button type="button" class="btn small" data-act="pe-on-vol" data-id="' + esc(v.id) + '">Turn alert emails back on</button></div>'
     : '';
   var facts = [h.vigil ? hrsTxt(h.vigil) + ' at the bedside' : '', h.other ? hrsTxt(h.other) + ' other' : '', h.first ? 'since ' + longDate(h.first) : 'no hours yet', h.last ? 'last active ' + medDate(h.last) : ''].filter(Boolean).join(' · ');
@@ -1172,8 +1189,8 @@ function volDetail(v) {
       '<div class="row"><span>Email</span><b>' + esc(v.email) + '</b></div>' +
       '<div class="row"><span>Department</span><b>' + esc(v.org || '—') + '</b></div>' +
       '<div class="row"><span>Pages</span><b>' + (v.onCall ? 'On call' : 'Paused') + '</b></div>' +
-      '<div class="row"><span>App notifications</span><b>' + (v.devices ? plural(v.devices, 'phone') + (v.tested ? ', tested' : '') : 'Off') + '</b></div>' +
-      '<div class="row"><span>Alert emails</span><b>' + (v.pageEmail ? 'On' : 'Off (phone only)') + '</b></div>' +
+      '<div class="row"><span>App notifications</span><b>' + (v.devices ? plural(v.devices, 'phone') + (v.tested ? ', tested' : '') : appOnly() && v.onCall ? '<span class="flag">Off: gets no pages</span>' : 'Off') + '</b></div>' +
+      '<div class="row"><span>Alert emails</span><b>' + (appOnly() ? 'Off for everyone (Settings tab)' : v.pageEmail ? 'On' : 'Off (phone only)') + '</b></div>' +
       pe + '</div>';
 }
 // The add-hours form, for one volunteer (their page) or several (the bulk page).
@@ -1351,7 +1368,7 @@ function viewLinks() {
   var where = !ST.appUrl
     ? 'Links open the Apps Script web app. To move everyone to the phone app, paste its address next to Phone app URL on the Settings tab.'
     : si.links ? '' : 'Emails open the phone app with no personal link in them. People sign in there with their email.';
-  var appOnly = ST.volunteers.filter(function (v) { return !v.pageEmail; }).length;
+  var appOnlyN = ST.volunteers.filter(function (v) { return !v.pageEmail; }).length;
   var rc = ST.receipts || { sent: 0, confirmed: 0, missed: 0 };
   var checked = rc.confirmed + rc.missed;
   return '<div class="head"><p class="eyebrow">Setup</p><h2>Links and status</h2></div>' +
@@ -1362,15 +1379,18 @@ function viewLinks() {
     '<h3 class="sec">Status</h3><div class="status">' +
       '<div class="row"><span>Emails left today</span><b>' + ST.emailLeft + '</b></div>' +
       '<div class="row"><span>App notifications</span><b>' + esc(pushStatusText()) + '</b></div>' +
-      '<div class="row"><span>Alerts by app only</span><b>' + (appOnly ? plural(appOnly, 'volunteer') : 'None yet') + '</b></div>' +
+      (appOnly() ? '<div class="row"><span>Alert emails</span><b>Off · sign-in only</b></div>' +
+        '<div class="row"><span>Can get pages</span><b>' + reachN() + ' of ' + ST.onCall + ' on call</b></div>'
+        : '<div class="row"><span>Alerts by app only</span><b>' + (appOnlyN ? plural(appOnlyN, 'volunteer') : 'None yet') + '</b></div>') +
       (checked ? '<div class="row"><span>Phone receipts</span><b>' + rc.confirmed + ' of ' + checked + ' confirmed (' + Math.round(100 * rc.confirmed / checked) + '%)</b></div>' : '') +
       '<div class="row"><span>Coordinator email</span><b>' + esc(ST.coordEmail || 'Not set') + '</b></div>' +
       (ST.signIn ? '<div class="row"><span>Email sign-in</span><b>' + (si.email ? 'On · ' + codes.today + ' of ' + codes.cap + ' codes today' : 'Off') + '</b></div>' +
         '<div class="row"><span>Links in emails</span><b>' + (si.links ? 'Personal sign-in links' : 'App address only') + '</b></div>' +
         '<div class="row"><span>Shared charge RN link</span><b>' + (si.shared ? 'On' : 'Off') + '</b></div>' : '') +
     '</div>' +
-    '<p class="hint">This Google account can email 100 people a day. App notifications don’t count.' +
-      (ST.signIn ? ' Sign-in codes pause when 30 or fewer emails are left, so pages still go out.' : '') + '</p>' +
+    (appOnly() ? '<p class="hint">Alert emails are off (Settings tab), so email is used only for sign-in. This Google account can email 100 people a day.</p>'
+      : '<p class="hint">This Google account can email 100 people a day. App notifications don’t count.' +
+      (ST.signIn ? ' Sign-in codes pause when 30 or fewer emails are left, so pages still go out.' : '') + '</p>') +
     '<button type="button" class="btn" data-act="test">Send me a test email</button>' +
     (MODE === 'pwa' ? '<h3 class="sec">Notifications on this phone</h3>' + notifCard() + deviceCard() : '');
 }
