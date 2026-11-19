@@ -1,0 +1,25 @@
+Firebase JavaScript SDK 12.19.0 (Apache License 2.0, Copyright Google LLC)
+
+Where these files come from
+  npm package:  firebase@12.19.0
+  npm integrity: sha512-kwXCLcI0ly2lkwygkbuRx6SsX3DSO96355YrWh9SWZ5ncsxK/y5cirn3sY6nZVSiBVE++2nL6Hchzu1EB8uohQ==
+  Files: firebase-app.js and firebase-messaging.js from the package root
+  (the same browser builds Google serves at https://www.gstatic.com/firebasejs/12.19.0/).
+
+Changes made
+  firebase-app.js        none (byte-for-byte copy)
+  firebase-messaging.js  one change: its import of
+                         "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js"
+                         now points to "./firebase-app.js", so the app loads no code
+                         from a third-party site.
+
+SHA-256
+  firebase-app.js        39a50952b5def557337b2290069c7d7371f3515ad46c44a43b9c520f734d8d14 (same as the package)
+  firebase-messaging.js  61812e6268be19a6b26ff8322202d058f94b1083af6e46cc1e42d58c98bdf683
+                         (package original: 7572acc95d2f0182ef70bb16b2920b022340bde54cea5962704c745488e98b23)
+
+Network calls these files make (only after someone taps "Turn on notifications")
+  https://firebaseinstallations.googleapis.com  (creates the phone's Firebase installation ID)
+  https://fcmregistrations.googleapis.com       (links that ID to the phone's push subscription)
+
+License: https://www.apache.org/licenses/LICENSE-2.0 (each file carries its license header).
