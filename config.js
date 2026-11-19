@@ -12,12 +12,12 @@ var NODA_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxAmUnAtd_4z
 //    Firebase console: Project settings (gear icon) > General > Your apps > SDK setup and configuration > Config.
 //    Replace the whole block below, from "const firebaseConfig" to the closing "};", with the one Firebase shows you.
 const firebaseConfig = {
-  apiKey: "PASTE",
-  authDomain: "PASTE",
-  projectId: "PASTE",
-  storageBucket: "PASTE",
-  messagingSenderId: "PASTE",
-  appId: "PASTE"
+  apiKey: "AIzaSyC4gNAo5OfiOaV9hPIKM11dgXxP7PyTNgA",
+  authDomain: "noda-alert.firebaseapp.com",
+  projectId: "noda-alert",
+  storageBucket: "noda-alert.firebasestorage.app",
+  messagingSenderId: "954161711730",
+  appId: "1:954161711730:web:fb823ba77d099926db90eb"
 };
 
 // 3. Your Web Push certificate key pair (the long public key, about 88 characters).
