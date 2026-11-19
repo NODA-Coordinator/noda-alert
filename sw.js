@@ -10,7 +10,7 @@
  * No patient information ever passes through here: pushes carry only unit, times, hours to cover and PPE.
  */
 'use strict';
-var CACHE = 'noda-shell-2.4.0';
+var CACHE = 'noda-shell-2.4.1';
 // Receipts go only to an Apps Script web app address.
 var API_RE = /^https:\/\/script\.google\.com\/(a\/macros\/[^\/\s]+|macros)\/s\/[A-Za-z0-9_-]{10,}\/exec$/;
 var SHELL = [

@@ -7,7 +7,7 @@
 (function () {
 'use strict';
 var H = 3600e3, MIN = 60e3, DAY = 24 * H;
-var APP_VERSION = '2.4.0';
+var APP_VERSION = '2.4.1';
 var FIREBASE_DIR = './vendor/firebase/12.19.0/';
 var GAS = !!(window.google && google.script && google.script.run);
 var MODE = GAS ? 'gas' : (document.documentElement.getAttribute('data-app') === 'pwa' ? 'pwa' : 'none');
@@ -26,6 +26,9 @@ var ROLES = { key: '', list: [], who: '', at: 0 };   // version 2.4: roles this 
 var ROLE_FETCH = false;
 var ROLE_SHORT = { vol: 'Volunteer', rn: 'Charge nurse', coord: 'Coordinator' };
 var ROLE_WORD = { vol: 'a volunteer', rn: 'a charge nurse', coord: 'the NODA coordinator' };
+// Role colors (version 2.4.1): the app takes the color of the role it's in (app.css, html[data-role]). These are the
+// light-mode colors, also used for the phone's status bar; dark mode keeps a dark status bar.
+var ROLE_THEME = { vol: '#3D3B93', rn: '#1766A0', coord: '#6B1F62' };
 var app = document.getElementById('app'), tabs = document.getElementById('tabs'), whoEl = document.getElementById('who');
 var rolesEl = document.createElement('div');
 rolesEl.id = 'roles'; rolesEl.className = 'roles'; rolesEl.hidden = true;
@@ -142,7 +145,7 @@ function toast(msg) {
 }
 function editing() {
   var a = document.activeElement;
-  return VIEW.name === 'request' || VIEW.name === 'letter' || VIEW.name === 'bulk' || UI.addHours || UI.fix ||
+  return VIEW.name === 'request' || VIEW.name === 'letter' || VIEW.name === 'bulk' || UI.addHours || UI.fix || UI.addVol || UI.addRn ||
     UI.endAsk || UI.confirmRelease || UI.confirmReset || UI.confirmRn || UI.confirmSignOut ||
     (a && /INPUT|SELECT|TEXTAREA/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio');
 }
@@ -784,7 +787,7 @@ function rnHome() {
     ? '<div class="stats overview"><div><b>' + active.length + '</b><span>' + (active.length === 1 ? 'active vigil' : 'active vigils') + '</span></div>' +
       '<div><b>' + avail + '</b><span>available hours, next 12 h</span></div><div><b>' + ST.onCall + '</b><span>on call</span></div></div>' : '';
   return installBanner() + getAppCard() +
-    '<div class="head"><p class="eyebrow">' + (ST.role === 'coord' ? 'Coordinator' : 'Charge RN' + (ST.name ? ' · ' + esc(ST.name) : '')) + '</p><h2>NODA vigils</h2></div>' + overview +
+    '<div class="head"><h2>NODA vigils</h2></div>' + overview +
     (ST.units.length ? '<button type="button" class="btn primary big block" data-act="new">Request a NODA volunteer</button>' : '<p class="note">Add at least one unit on the Units tab of the Sheet before paging.</p>') +
     '<p class="hint">For a patient expected to die soon who would otherwise be alone. ' + plural(ST.onCall, 'volunteer is', 'volunteers are') + ' on call.</p>' +
     '<h3 class="sec">Active now</h3>' +
@@ -927,7 +930,7 @@ function volHome() {
   var peNote = !ST.me.pageEmail && !on
     ? '<div class="note row"><span>Alert emails are off, so pages and reminders go only to the phone where you turned notifications on.</span><button type="button" class="btn small" data-act="pe-on">Email me alerts too</button></div>' : '';
   return installBanner() + getAppCard() +
-    '<div class="head"><p class="eyebrow">Volunteer · ' + esc(ST.me.name) + '</p><h2>NODA vigils</h2></div>' +
+    '<div class="head"><h2>NODA vigils</h2></div>' +
     '<label class="toggle" for="f-avail"><span><b>Available for NODA pages</b><small>' +
       (ST.me.onCall ? by : 'Paused. You won’t get alerts.') +
     '</small></span><input type="checkbox" id="f-avail" role="switch"' + (ST.me.onCall ? ' checked' : '') + '></label>' +
@@ -1106,11 +1109,12 @@ function viewVols() {
   if (VIEW.name === 'bulk') return bulkView();
   var vols = ST.volunteers.slice().sort(function (a, b) { return a.name.localeCompare(b.name); });
   var links = !ST.signIn || ST.signIn.links;
-  var add = '<form id="addvol" class="card form" novalidate><p class="eyebrow">Add a volunteer</p>' +
+  var add = !UI.addVol ? '<button type="button" class="btn block" data-act="addvol-open">Add a volunteer</button>' :
+    '<form id="addvol" class="card form" novalidate><p class="eyebrow">Add a volunteer</p>' +
     '<label class="field" for="v-name"><span>Full name</span><input type="text" id="v-name" autocomplete="off" required></label>' +
     '<label class="field" for="v-email"><span>Email</span><input type="email" id="v-email" autocomplete="off" required></label>' +
     '<label class="field" for="v-org"><span>Staff department or Volunteer Services</span><input type="text" id="v-org" autocomplete="off"></label>' +
-    '<button type="submit" class="btn primary">Add volunteer</button></form>';
+    '<div class="row acts-row"><button type="submit" class="btn primary">Add volunteer</button><button type="button" class="btn" data-act="addvol-close">Done</button></div></form>';
   var list = vols.length ? '<ul class="roster">' + vols.map(function (v) {
     var linkBox = UI.showLink === v.id ? (v.link
       ? '<div class="linkbox"><input type="text" id="l-' + esc(v.id) + '" readonly value="' + esc(v.link) + '"><button type="button" class="btn small" data-act="copy" data-src="l-' + esc(v.id) + '">Copy link</button></div>'
@@ -1120,7 +1124,7 @@ function viewVols() {
           ? 'Make a new link for ' + esc(v.name) + '? Their old link stops working' + (v.devices ? ', and so do notifications on their phone until they sign in with the new link' : '') + '.'
           : 'Sign ' + esc(v.name) + ' out of NODA Alert on every phone? They can sign in again with their email' + (v.devices ? '. Notifications on their phone stop until they do' : '') + '.') +
         '</p><div class="row"><button type="button" class="btn danger" data-act="reset" data-id="' + esc(v.id) + '">' + (links ? 'Make new link' : 'Sign out') + '</button><button type="button" class="btn" data-act="reset-cancel">Cancel</button></div></div>' : '';
-    return '<li><div class="row"><button type="button" class="who" data-act="vol-open" data-id="' + esc(v.id) + '"><b>' + esc(v.name) + '</b><small>' + esc(v.org || '—') + ' · ' + esc(v.email) + appText(v) + '</small></button>' +
+    return '<li><div class="row"><button type="button" class="who" data-act="vol-open" data-id="' + esc(v.id) + '"><b>' + esc(v.name) + '</b><small>' + esc([v.org, v.email].filter(Boolean).join(' · ')) + appText(v) + '</small></button>' +
       (v.onCall ? '<span class="chip taken">On call</span>' : '<span class="chip done">Paused</span>') + '</div>' +
       '<div class="row"><span class="hrs">' + esc(hrsTxt(v.hours.total)) + (letterOpen(v) ? ' · <b class="flag">letter requested</b>' : '') + '</span><span class="acts">' +
       '<button type="button" class="btn small" data-act="vol-open" data-id="' + esc(v.id) + '">Hours and letter</button>' +
@@ -1285,10 +1289,11 @@ function viewRns() {
   var setupNote = !ST.appUrl
     ? '<p class="note">Charge nurses sign in through the phone app. Paste its address next to Phone app URL on the Settings tab of the Sheet first.</p>'
     : !si.email ? '<p class="note">Email sign-in is Off on the Settings tab, so the charge nurses below can’t sign in yet.</p>' : '';
-  var add = '<form id="addrn" class="card form" novalidate><p class="eyebrow">Add a charge nurse</p>' +
+  var add = !UI.addRn ? '<button type="button" class="btn block" data-act="addrn-open">Add a charge nurse</button>' :
+    '<form id="addrn" class="card form" novalidate><p class="eyebrow">Add a charge nurse</p>' +
     '<label class="field" for="n-name"><span>Full name</span><input type="text" id="n-name" autocomplete="off" required></label>' +
     '<label class="field" for="n-email"><span>Work email</span><input type="email" id="n-email" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>' +
-    '<button type="submit" class="btn primary">Add charge nurse</button></form>';
+    '<div class="row acts-row"><button type="submit" class="btn primary">Add charge nurse</button><button type="button" class="btn" data-act="addrn-close">Done</button></div></form>';
   var rows = list.length ? '<ul class="roster">' + list.map(function (n) {
     var chip = !n.on ? '<span class="chip done">Off</span>' : n.signedIn ? '<span class="chip taken">Signed in</span>' : '<span class="chip open">Not signed in yet</span>';
     return '<li><div class="row"><span><b>' + esc(n.name) + '</b><small>' + esc(n.email) + '</small></span>' + chip + '</div>' +
@@ -1382,9 +1387,17 @@ function viewLinks() {
 }
 
 /* ---------- render ---------- */
+// The role's color on the whole app, and on Android's status bar (version 2.4.1). '' = signed out: the usual colors.
+function roleTheme(role) {
+  var r = ROLE_THEME[role] ? role : '', html = document.documentElement;
+  if ((html.getAttribute('data-role') || '') !== r) { if (r) html.setAttribute('data-role', r); else html.removeAttribute('data-role'); }
+  var meta = document.querySelector('meta[name="theme-color"][media="(prefers-color-scheme: light)"]');
+  if (meta && meta.getAttribute('content') !== ROLE_THEME[r || 'vol']) meta.setAttribute('content', ROLE_THEME[r || 'vol']);
+}
 function render() {
   var rs = roleSwitchHTML();
   rolesEl.innerHTML = rs; rolesEl.hidden = !rs;
+  roleTheme(ST && KEY ? ST.role : '');
   if (MODE === 'pwa' && !KEY) { whoEl.textContent = 'Sign in'; tabs.hidden = true; app.innerHTML = signInView(); return; }
   if (!ST) return;
   if (ST.role === 'none') { whoEl.textContent = MODE === 'pwa' ? 'Sign in' : 'Link not active'; tabs.hidden = true; app.innerHTML = noneView(); return; }
@@ -1499,6 +1512,10 @@ var ACT = {
   },
   'letter-print': function () { try { window.print(); } catch (e) { toast('Use your browser’s Print command to print the letter.'); } },
   'letter-email': function (el) { var o = readLetterForm(); LETTER.opts = o; act('emailLetter', [el.getAttribute('data-id'), o]); },
+  'addvol-open': function () { UI.addVol = true; render(); focusField('v-name'); },
+  'addvol-close': function () { UI.addVol = false; render(); },
+  'addrn-open': function () { UI.addRn = true; render(); focusField('n-name'); },
+  'addrn-close': function () { UI.addRn = false; render(); },
   'signout-ask': function () { UI.confirmSignOut = true; render(); },
   'signout-cancel': function () { UI.confirmSignOut = false; render(); },
   signout: function () { signOut(); },

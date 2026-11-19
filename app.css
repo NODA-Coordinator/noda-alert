@@ -279,3 +279,44 @@ table.hours tfoot th{border-top:2px solid var(--line);font-size:.86rem;letter-sp
 .hrow:focus-visible{outline:3px solid var(--accent);outline-offset:-3px;border-radius:10px}
 .fixform{display:grid;gap:8px;padding:10px 12px 12px;border-top:1px dashed var(--line)}
 .fixform .acts{display:flex;flex-wrap:wrap;gap:8px}
+
+/* ---------- version 2.4.1: each role has its own color ---------- */
+/* The accent follows the role the app is in: indigo for volunteers, blue for charge nurses, plum for the
+   coordinator (html[data-role], set by app.js). Status colors (green covered, amber open, red not covered)
+   stay the same in every role. Every pair here keeps at least 4.5:1 contrast, in light and dark. */
+:root{
+  --role-vol:#3D3B93; --role-vol-soft:#E5E5F6;
+  --role-rn:#1766A0; --role-rn-soft:#DCEAF5;
+  --role-coord:#6B1F62; --role-coord-soft:#F3E0EE;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --role-vol:#A5A3F6; --role-vol-soft:#2A2D59;
+    --role-rn:#9FD3F6; --role-rn-soft:#17374D;
+    --role-coord:#D07ABD; --role-coord-soft:#43203D;
+  }
+}
+html[data-role="vol"]{--accent:var(--role-vol);--accent-soft:var(--role-vol-soft)}
+html[data-role="rn"]{--accent:var(--role-rn);--accent-soft:var(--role-rn-soft)}
+html[data-role="coord"]{--accent:var(--role-coord);--accent-soft:var(--role-coord-soft)}
+/* A band in the role's color across the top of every screen, and the role line under the title in that color */
+html[data-role] body::before{content:"";position:fixed;top:0;left:0;right:0;height:5px;background:var(--accent);z-index:10}
+html[data-role] .top p{color:var(--accent);font-weight:700}
+/* Each role button is outlined in its own color (filled when it's the role in use), and so are the role choices at sign-in */
+.rolebtn[data-role="vol"]{color:var(--role-vol);border-color:var(--role-vol)}
+.rolebtn[data-role="rn"]{color:var(--role-rn);border-color:var(--role-rn)}
+.rolebtn[data-role="coord"]{color:var(--role-coord);border-color:var(--role-coord)}
+.rolebtn[data-role][aria-pressed="true"]{color:var(--accent-ink);border-color:var(--accent)}
+.btn.primary[data-role="vol"]{background:var(--role-vol);border-color:var(--role-vol)}
+.btn.primary[data-role="rn"]{background:var(--role-rn);border-color:var(--role-rn)}
+.btn.primary[data-role="coord"]{background:var(--role-coord);border-color:var(--role-coord)}
+@media print{ html[data-role] body::before{display:none} }
+/* Easier to read (version 2.4.1): the smallest labels and notes one step larger */
+.eyebrow,.sec,.roles-label,.slots .dayhead,.facts b{font-size:.8rem}
+.hint{font-size:.94rem}
+.chip{font-size:.86rem}
+.meta{font-size:.92rem}
+.stats span,.legend{font-size:.84rem}
+.roster small,.toggle small,.notif small,.shift .sub{font-size:.92rem}
+.vid{font-size:.86rem}
+.ver{font-size:.8rem}
