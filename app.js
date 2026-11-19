@@ -277,7 +277,7 @@ function signInView(reason) {
       '</form>' +
       '<div class="more"><button type="button" class="btn small quiet" data-act="signin-resend"' + dis + '>Send a new code</button>' +
         '<button type="button" class="btn small quiet" data-act="signin-restart"' + dis + '>Use a different email</button></div>' +
-      '<p class="hint">No email after a few minutes? Check your spam or junk folder, and use the email address your NODA coordinator has for you.</p>';
+      '<p class="hint">No code after a few minutes? Check your spam or junk folder.</p>';
   }
   return (reason === 'revoked' ? '<p class="note">You’ve been signed out on this phone. Sign in again to keep using NODA Alert.</p>' : '') +
     '<div class="head"><p class="eyebrow">Sign in</p><h2>Sign in to NODA Alert</h2></div>' +
@@ -288,7 +288,6 @@ function signInView(reason) {
       '<div class="acts"><button type="submit" class="btn primary"' + dis + '>' + (SIGN.busy ? 'Sending…' : 'Email me a code') + '</button></div>' +
     '</form>' +
     '<h3 class="sec">Have a NODA Alert link?</h3>' +
-    '<p class="hint m0">If your coordinator gave you a personal link, you can sign in with it instead.</p>' +
     '<div class="more"><button type="button" class="btn small" data-act="signin-paste"' + dis + '>Paste your link</button></div>';
 }
 function focusField(id) { var i = document.getElementById(id); if (i) { try { i.focus(); } catch (e) { /* not focusable */ } } }
@@ -353,8 +352,7 @@ function pasteView(reason) {
       '<div class="acts"><button type="submit" class="btn primary"' + (PASTE.busy ? ' disabled' : '') + '>' + (PASTE.busy ? 'Checking…' : 'Sign in') + '</button>' +
       (canPaste ? '<button type="button" class="btn" data-act="paste-clip"' + (PASTE.busy ? ' disabled' : '') + '>Paste</button>' : '') + '</div>' +
     '</form>' +
-    '<p class="hint">On iPhone, an app on the Home Screen keeps its own sign-in, separate from Safari, so it asks for your link once. In any NODA email, press and hold the <b>Open NODA Alert</b> or <b>Take a shift</b> button and choose <b>Copy Link</b>.</p>' +
-    '<p class="hint">No link? Sign in with your email instead, or ask your NODA coordinator.</p>' +
+    '<p class="hint">To copy your link, press and hold the <b>Open NODA Alert</b> or <b>Take a shift</b> button in any NODA email, then copy the link.</p>' +
     '<div class="more"><button type="button" class="btn small" data-act="signin-email"' + (PASTE.busy ? ' disabled' : '') + '>Sign in with email instead</button></div>';
 }
 function trySignIn(text) {
@@ -477,8 +475,7 @@ function installBanner() {
         '<li>Open <b>NODA</b> from your Home Screen and paste your link' + (push ? '. Then tap <b>Turn on notifications</b>' : '') + '.</li>';
     return '<section class="banner" aria-label="Add NODA Alert to your Home Screen"><p class="h">Add NODA Alert to your Home Screen</p>' +
       '<ol>' + steps + '</ol>' +
-      '<p>' + (byEmail ? 'The Home Screen app has its own sign-in, separate from Safari, so it asks for your email once. ' : '') +
-        'Don’t see Add to Home Screen? Open this page in Safari first.' + (push ? ' Notifications need iOS 16.4 or later.' : '') + '</p>' +
+      '<p>Don’t see Add to Home Screen? Open this page in Safari first.</p>' +
       '<div class="acts">' + (byEmail ? '' : '<button type="button" class="btn small primary" data-act="copy-mylink">Copy my link</button>') + later + '</div></section>';
   }
   if (INSTALL.evt) {
@@ -529,8 +526,9 @@ function notifCard() {
   var s = pushState();
   if (s === 'na' || (s === 'unconfigured' && ST.role !== 'coord')) return '';
   var coord = ST.role === 'coord';
-  var how = 'email';
-  var what = coord ? 'copies of new vigils, released shifts and closures' : 'pages';
+  var what = coord ? 'vigil updates' : 'pages';
+  // Said only when it's true: a volunteer who turned alert emails off gets pages on their other phone, not by email.
+  var until = coord || ST.me.pageEmail ? ' Until then, ' + what + ' come by email.' : '';
   var head, sub, chip = '', acts = '', extra = '';
   var dis = PUSH.busy ? ' disabled' : '';
   if (s === 'unconfigured') {
@@ -539,14 +537,14 @@ function notifCard() {
     chip = '<span class="chip off">Off</span>';
   } else if (s === 'ios-old') {
     head = 'Notifications need a newer iPhone update';
-    sub = 'Notifications need iOS 16.4 or later (Settings, General, Software Update). Until then, ' + what + ' come by ' + how + '.';
+    sub = 'Update to iOS 16.4 or later in Settings, General, Software Update.' + until;
   } else if (s === 'ios-install') {
     head = 'Notifications need the Home Screen app';
-    sub = 'On iPhone, notifications work once NODA Alert is on your Home Screen. Add it (steps above), open it from your Home Screen, then turn notifications on there.';
+    sub = 'Add NODA Alert to your Home Screen, open it from there, then turn on notifications.';
     if (!installBanner()) acts = '<button type="button" class="btn small" data-act="install-show">Show the steps</button>';
   } else if (s === 'unsupported') {
     head = 'This browser can’t show notifications';
-    sub = 'Use Chrome on Android, or Safari on iPhone with NODA Alert added to the Home Screen. Until then, ' + what + ' come by ' + how + '.';
+    sub = 'Use Chrome on Android, or Safari on iPhone with NODA Alert added to the Home Screen.' + until;
   } else if (s === 'denied') {
     head = 'Notifications are blocked';
     chip = '<span class="chip blocked">Blocked</span>';
@@ -558,23 +556,20 @@ function notifCard() {
   } else if (s === 'on') {
     head = 'Notifications are on';
     chip = '<span class="chip on">On</span>';
-    sub = coord ? 'Copies of new vigils, released shifts and closures arrive on this phone, and still by email.'
-      : ST.me.pageEmail ? 'Pages and shift reminders arrive on this phone, and by email too.'
-      : 'Pages, reminders and thank-you notes arrive on this phone only. Sign-up confirmations and cancellations still come by email.';
+    // Volunteers: the Available switch above and Email me alerts too below already say where alerts go.
+    sub = coord ? 'Vigil updates come to this phone and by email.' : '';
     acts = '<button type="button" class="btn small" data-act="push-test"' + dis + (TEST.waiting ? ' disabled' : '') + '>Send a test</button><button type="button" class="btn small quiet" data-act="push-off"' + dis + '>Turn off</button>';
     extra = testLine() + (coord ? '' : pageEmailBlock());
   } else {
     head = coord ? 'Get vigil updates on this phone' : 'Get pages on this phone';
     chip = '<span class="chip off">Off</span>';
-    sub = 'Turn on notifications so ' + what + ' reach this phone right away, even when the app is closed. ' +
-      (!coord && ST.me.appFirst && ST.me.pageEmail && ST.me.receiptsOk
-        ? 'Once a test reaches this phone, pages and reminders come here instead of by email.'
-        : 'They keep coming by ' + how + ' too.');
+    sub = 'Get ' + what + ' right away, even when the app is closed.' +
+      (!coord && ST.me.appFirst && ST.me.pageEmail && ST.me.receiptsOk ? ' After a test, they come here instead of by email.' : '');
     acts = '<button type="button" class="btn primary" data-act="push-on"' + dis + '>' + (PUSH.busy ? 'Turning on…' : 'Turn on notifications') + '</button>';
   }
   if (PUSH.busy && s === 'on') acts = '<span class="hint m0">Working…</span>';
   return '<section class="card notif' + (s === 'on' ? ' on' : '') + '" id="notif" aria-live="polite">' +
-    '<div class="row"><span><b>' + head + '</b><small>' + sub + '</small></span>' + chip + '</div>' +
+    '<div class="row"><span><b>' + head + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</span>' + chip + '</div>' +
     (PUSH.err ? '<p class="err" role="alert">' + esc(PUSH.err) + '</p>' : '') +
     (acts ? '<div class="acts">' + acts + '</div>' : '') + extra + '</section>';
 }
@@ -600,15 +595,15 @@ function pageEmailBlock() {
   var any = (me.phones || []).some(function (p) { return p.tested; });
   if (!any) {
     return '<p class="hint m0">' + (!me.receiptsOk
-      ? 'Alert emails stay on for now: your coordinator needs to finish one setup step (the Web app URL on the Settings tab) before phones can confirm tests.'
+      ? 'Alert emails stay on until your coordinator finishes setup.'
       : me.appFirst && me.pageEmail
-      ? 'Send a test. Once it reaches this phone, pages, reminders and thank-you notes come here instead of by email.'
-      : 'Send a test. Once it reaches this phone, you can choose to get alerts here only, without emails.') + '</p>';
+      ? 'Send a test. After it arrives, alerts come here instead of by email.'
+      : 'Send a test. After it arrives, you can turn off alert emails.') + '</p>';
   }
   return '<label class="toggle inset" for="f-pagemail"><span><b>Email me alerts too</b><small>' +
     (me.pageEmail
-      ? 'Turn this off to get pages, reminders and thank-you notes on your phone only.'
-      : 'Off. Your phone confirms each alert it gets. If it ever misses one, NODA emails it and turns these emails back on.') +
+      ? 'Turn off to get alerts on this phone only.'
+      : 'Off. If your phone misses an alert, NODA emails it.') +
     '</small></span><input type="checkbox" id="f-pagemail" role="switch"' + (me.pageEmail ? ' checked' : '') + '></label>';
 }
 // After "Send a test": ask the server every few seconds whether this phone sent back the test's receipt.
@@ -789,7 +784,7 @@ function rnHome() {
   return installBanner() + getAppCard() +
     '<div class="head"><h2>NODA vigils</h2></div>' + overview +
     (ST.units.length ? '<button type="button" class="btn primary big block" data-act="new">Request a NODA volunteer</button>' : '<p class="note">Add at least one unit on the Units tab of the Sheet before paging.</p>') +
-    '<p class="hint">For a patient expected to die soon who would otherwise be alone. ' + plural(ST.onCall, 'volunteer is', 'volunteers are') + ' on call.</p>' +
+    (ST.role === 'rn' ? '<p class="hint">' + plural(ST.onCall, 'volunteer is', 'volunteers are') + ' on call.</p>' : '') +
     '<h3 class="sec">Active now</h3>' +
     (active.length ? '<div class="stack">' + active.map(function (v) { return vigilCard(v, 'rn', now); }).join('') + '</div>' : '<p class="empty">No active vigils.</p>') +
     (ended.length ? '<h3 class="sec">Ended in the last day</h3><div class="stack">' + ended.map(function (v) { return vigilCard(v, 'rn', now); }).join('') + '</div>' : '') +
@@ -805,9 +800,8 @@ function seg(name, val, label, cur) {
 }
 function reqOK(d) { return d.crit1.length > 0 && d.crit2.length > 0 && d.consent; }
 function covLine(d) {
-  var start = Math.floor(Date.now() / (30 * MIN)) * 30 * MIN + d.startIn * H, end = start + d.windowH * H, r = rules();
-  return 'Covers ' + dayWord(start) + ' ' + t24(start) + ' to ' + dayWord(end) + ' ' + t24(end) + ', ' + d.windowH + ' hours. ' +
-    'Volunteers choose how long to stay, ' + r.min + ' to ' + r.max + ' hours at a time.';
+  var start = Math.floor(Date.now() / (30 * MIN)) * 30 * MIN + d.startIn * H, end = start + d.windowH * H;
+  return 'Covers ' + dayWord(start) + ' ' + t24(start) + ' to ' + dayWord(end) + ' ' + t24(end) + ', ' + d.windowH + ' hours.';
 }
 function rnRequest() {
   var d = DRAFT, L = ST.lists, ok = reqOK(d);
@@ -827,9 +821,9 @@ function rnRequest() {
         '<div class="field"><span>Cover the next</span><div class="seg">' + [12, 24, 48, 72].map(function (h) { return seg('windowH', h, h + ' hours', d.windowH); }).join('') + '</div></div>' +
         '<p class="hint" id="cov-sum">' + esc(covLine(d)) + '</p>' +
       '</fieldset>' +
-      '<p class="note">Volunteers get the unit, the hours to cover, where to check in and whether PPE is needed. Nothing about the patient. Share bedside details in person at check-in.</p>' +
+      '<p class="note">The page has no patient details. Share those in person at check-in.</p>' +
       '<button type="submit" class="btn primary big block" id="send"' + (ok ? '' : ' disabled') + '>Page ' + plural(ST.onCall, 'on-call volunteer') + '</button>' +
-      '<p class="hint" id="why"' + (ok ? ' hidden' : '') + '>To send, check one item in each list and confirm permission was given.</p>' +
+      '<p class="hint" id="why"' + (ok ? ' hidden' : '') + '>Check one item in each list and confirm permission to send.</p>' +
     '</form>';
 }
 function readForm(f) {
@@ -903,7 +897,7 @@ function rnVigil(v) {
     '<div class="legend"><span><i class="f"></i>Filled</span><span><i class="o"></i>Open</span><span><i class="m"></i>Not covered</span></div>' +
     actions + '</div>' +
     '<h3 class="sec">Hours</h3><ul class="slots">' + rows + '</ul>' +
-    '<p class="hint">Volunteers sign up for ' + rules().min + ' to ' + rules().max + ' hours at a time, arrive 5–10 minutes early to learn the patient’s preferences, and check in ' + esc(where(v)) + '.</p>';
+    '<p class="hint">Volunteers arrive 5–10 minutes early and check in ' + esc(where(v)) + '.</p>';
 }
 
 /* ---------- volunteer ---------- */
@@ -954,7 +948,7 @@ function serviceCard() {
     (has && !letterAsked() ? '<button type="button" class="btn small" data-act="ask-letter">Ask for a service letter</button>' : '');
   var note = letterAsked()
     ? '<p class="hint m0">You asked for a service letter on ' + esc(medDate(ST.me.letterAsked)) + '. Your coordinator will email it to you.</p>'
-    : has ? '<p class="hint m0">A service letter from your coordinator confirms your NODA hours, for school, scholarship or job applications.</p>' : '';
+    : has ? '<p class="hint m0">A letter confirming your NODA hours, for school or job applications.</p>' : '';
   return '<h3 class="sec">Your NODA service</h3><div class="card service">' + body + '<div class="acts">' + acts + '</div>' + note + '</div>';
 }
 // Hours rows, newest first. fixable (coordinator): tapping an entry opens a form to fix it, which adds a
@@ -999,7 +993,7 @@ function volHours() {
     (h.first ? '<p class="hint m0">Since ' + esc(longDate(h.first)) + (h.vigil ? '. ' + esc(hrsTxt(h.vigil)) + ' at the bedside.' : '.') + '</p>' : '') +
     '</div>' +
     '<h3 class="sec">History</h3>' + histList(ST.me.history || []) +
-    '<p class="hint">Vigil shifts are added when you check out. Your coordinator adds the training day and other NODA service. If something looks wrong, tell your coordinator.</p>' +
+    '<p class="hint">Shifts are added when you check out. If something looks wrong, tell your coordinator.</p>' +
     (h.total > 0 && !letterAsked() ? '<div class="more"><button type="button" class="btn" data-act="ask-letter">Ask for a service letter</button></div>' : '') +
     (letterAsked() ? '<p class="hint">You asked for a service letter on ' + esc(medDate(ST.me.letterAsked)) + '. Your coordinator will email it to you.</p>' : '');
 }
@@ -1011,7 +1005,7 @@ function shiftCard(v, s, now) {
     body = '<div class="row">' +
       (inNow ? '<button type="button" class="btn primary" data-act="checkout" data-id="' + esc(s.id) + '">Check out</button>'
         : canIn ? '<button type="button" class="btn primary" data-act="checkin" data-id="' + esc(s.id) + '">Check in</button>'
-        : '<span class="hint m0">Arrive 5–10 min early. Check-in opens at ' + t12(s.start - early) + '.</span>') +
+        : '<span class="hint m0">Check-in opens at ' + t12(s.start - early) + '.</span>') +
       (inNow ? '' : '<button type="button" class="btn quiet" data-act="release-ask" data-id="' + esc(s.id) + '">Can’t make it</button>') + '</div>';
   }
   return '<div class="card shift"><div class="row"><span class="t12">' + esc(dayLabel(s.start)) + ' · ' + r12(s.start, s.end) + '</span>' + (inNow ? '<span class="chip bedside">At bedside</span>' : '') + '</div>' +
@@ -1058,9 +1052,8 @@ function signupCard(v, now) {
     '<p class="hint m0">You’d sit ' + esc(dayWord(cur.t)) + ' ' + r12(cur.t, end) + ', ' + hrs(h) + '.' +
       (left.length ? ' That leaves ' + left.join(' and ') + '.' : '') + '</p>' +
     '<button type="button" class="btn primary block" data-act="take" data-id="' + esc(v.id) + '">Sign up for ' + hrs(h) + '</button>' +
-    '<p class="hint m0">' + (cur.lens.length === 1 && cur.lens[0] < r.min
-      ? 'Only ' + hrs(cur.lens[0]) + ' ' + (cur.lens[0] === 1 ? 'is' : 'are') + ' open here, so you can take ' + (cur.lens[0] === 1 ? 'it' : 'them') + ' on ' + (cur.lens[0] === 1 ? 'its' : 'their') + ' own.'
-      : 'Stay ' + r.min + ' to ' + r.max + ' hours. Arrive 5–10 minutes early to learn the patient’s preferences.') + '</p></div>';
+    (cur.lens.length === 1 && cur.lens[0] < r.min
+      ? '<p class="hint m0">Only ' + hrs(cur.lens[0]) + ' ' + (cur.lens[0] === 1 ? 'is' : 'are') + ' open here, so you can take ' + (cur.lens[0] === 1 ? 'it' : 'them') + ' on ' + (cur.lens[0] === 1 ? 'its' : 'their') + ' own.</p>' : '') + '</div>';
 }
 function volVigil(v) {
   var now = Date.now(), rows = '', last = '';
@@ -1080,7 +1073,7 @@ function volVigil(v) {
   var just = null;
   if (UI.justTook) signupsOf(v).forEach(function (x) { if (x.id === UI.justTook && x.vol === ST.me.id) just = x; });
   var onit = just ? '<div class="card onit"><p class="eyebrow">You’re on</p><p class="big">' + esc(dayLabel(just.start)) + ' · ' + r12(just.start, just.end) + '</p><ol>' +
-      '<li>Arrive 5–10 minutes early to learn the patient’s preferences. Check-in opens at ' + t12(just.start - rules().early * MIN) + '.</li>' +
+      '<li>Arrive 5–10 minutes early. Check-in opens at ' + t12(just.start - rules().early * MIN) + '.</li>' +
       '<li>Wear your NODA volunteer badge.</li>' +
       '<li>Check in ' + esc(where(v)) + '. The charge nurse walks you to the room.</li></ol></div>' : '';
   return '<button type="button" class="btn quiet back" data-act="home">‹ Vigils</button>' +
@@ -1090,7 +1083,7 @@ function volVigil(v) {
     '<li><b>PPE</b><span>' + (v.ppe ? 'Needed. The nurse shows you what to wear.' : 'None needed') + '</span></li>' +
     '<li><b>Arrive</b><span>5–10 minutes early, to learn the patient’s preferences</span></li></ul>' +
     signupCard(v, now) + '</div>' +
-    '<p class="hint">The charge nurse shares the patient’s name, room and anything you should know when you arrive. Nothing about the patient is sent by email or notification. If the vigil ends, you’ll get an alert.</p>' +
+    '<p class="hint">When you arrive, the charge nurse shares the patient’s name, room and anything you should know. If the vigil ends, you’ll get an alert.</p>' +
     '<h3 class="sec">Coverage</h3><ul class="slots">' + (rows || '<li class="dayhead">No upcoming hours</li>') + '</ul>';
 }
 
@@ -1136,11 +1129,11 @@ function viewVols() {
   }).join('') + '</ul>' : '<p class="empty">No volunteers yet. Add the first one above.</p>';
   return '<div class="head"><p class="eyebrow">' + plural(ST.onCall, 'volunteer') + ' on call of ' + ST.volunteers.length + '</p><h2>Volunteers</h2></div>' +
     '<div class="stack">' + add +
-    (vols.length ? '<div class="row"><button type="button" class="btn" data-act="bulk-open">Add hours for several volunteers</button><span class="hint m0">For the training day, for example.</span></div>' : '') +
+    (vols.length ? '<div class="row"><button type="button" class="btn" data-act="bulk-open">Add hours for several volunteers</button></div>' : '') +
     list + '</div>' +
     '<p class="hint">' + (links
-      ? 'Each volunteer’s link signs them in. Treat links like passwords, and make a new one if a link is shared.'
-      : 'Volunteers sign in to the phone app with their email and a 6-digit code. Email invite sends the app’s address and how to sign in.') + '</p>';
+      ? 'Treat each volunteer’s link like a password. If one gets shared, make a new link.'
+      : 'Email invite sends the app’s address and how to sign in with an email code.') + '</p>';
 }
 function appText(v) {
   if (!v.devices) return '';
@@ -1161,7 +1154,7 @@ function volDetail(v) {
   var hist = d.data ? histList(d.data.history, true) : d.err ? '<p class="err">' + esc(d.err) + '</p>' : '<p class="empty">Loading…</p>';
   var form = UI.addHours ? hoursForm('addhours', 'Add hours for ' + first, '') : '';
   var pe = !v.pageEmail
-    ? '<div class="row"><span>Alert emails are off: pages, reminders and thank-you notes go to their phone only, which confirms each one.</span><button type="button" class="btn small" data-act="pe-on-vol" data-id="' + esc(v.id) + '">Turn alert emails back on</button></div>'
+    ? '<div class="row"><span>Their phone confirms each alert it gets.</span><button type="button" class="btn small" data-act="pe-on-vol" data-id="' + esc(v.id) + '">Turn alert emails back on</button></div>'
     : '';
   var facts = [h.vigil ? hrsTxt(h.vigil) + ' at the bedside' : '', h.other ? hrsTxt(h.other) + ' other' : '', h.first ? 'since ' + longDate(h.first) : 'no hours yet', h.last ? 'last active ' + medDate(h.last) : ''].filter(Boolean).join(' · ');
   return '<button type="button" class="btn quiet back" data-act="home">‹ Volunteers</button>' +
@@ -1174,7 +1167,7 @@ function volDetail(v) {
       (UI.addHours ? '' : '<button type="button" class="btn" data-act="addhours-open">Add hours</button>') + '</div>' +
     form + '</div>' +
     '<h3 class="sec">Hours record</h3>' + hist +
-    '<p class="hint">Vigil shifts are added when ' + esc(first) + ' checks out. Add training and other NODA time with Add hours. To fix an entry, tap it: the fix is added as a correction, so the record keeps both.</p>' +
+    '<p class="hint">Tap an entry to fix it.</p>' +
     '<h3 class="sec">Contact and pages</h3><div class="status">' +
       '<div class="row"><span>Email</span><b>' + esc(v.email) + '</b></div>' +
       '<div class="row"><span>Department</span><b>' + esc(v.org || '—') + '</b></div>' +
@@ -1232,7 +1225,7 @@ function bulkView() {
   return '<button type="button" class="btn quiet back" data-act="home">‹ Volunteers</button>' +
     '<div class="head"><p class="eyebrow">Hours</p><h2>Add hours for several volunteers</h2></div>' +
     hoursForm('bulkhours', 'The same hours for everyone you check', picks) +
-    '<p class="hint">Each volunteer you check gets their own entry on their hours record. To fix one later, open that volunteer and tap the entry.</p>';
+    '<p class="hint">Each person gets their own entry. To fix one later, open that volunteer and tap it.</p>';
 }
 function letterView(v) {
   var L = LETTER.id === v.id ? LETTER : {};
@@ -1256,7 +1249,7 @@ function letterView(v) {
     '<div class="noprint"><div class="row acts-row"><button type="button" class="btn primary" data-act="letter-print"' + (ok ? '' : ' disabled') + '>Print or save as PDF</button>' +
       '<button type="button" class="btn" data-act="letter-copy"' + (ok ? '' : ' disabled') + '>Copy the text</button>' +
       '<button type="button" class="btn" data-act="letter-email" data-id="' + esc(v.id) + '"' + (ok ? '' : ' disabled') + '>Email PDF to ' + esc(first) + '</button></div>' +
-    '<p class="hint">The letter lists dates and hours only, never a patient, unit or vigil. Email sends a PDF to ' + esc(v.email) + ', with a copy to you. Copy the text to paste it into hospital letterhead. To print, a computer works best; choose Save as PDF to keep a copy.</p></div>';
+    '<p class="hint">Email sends a PDF to ' + esc(v.email) + ', with a copy to you. To use hospital letterhead, copy the text.</p></div>';
 }
 function letterHTML(c) {
   var p = function (t, cls) { return '<p' + (cls ? ' class="' + cls + '"' : '') + '>' + esc(t) + '</p>'; };
@@ -1304,10 +1297,10 @@ function viewRns() {
   }).join('') + '</ul>' : '<p class="empty">No charge nurses yet. Add the charge nurses on your pilot units above.</p>';
   return '<div class="head"><p class="eyebrow">' + plural(on, 'charge nurse') + ' can sign in</p><h2>Charge nurses</h2></div>' + setupNote +
     '<div class="stack">' + add + rows + '</div>' +
-    '<p class="hint">Each charge nurse signs in to the phone app with their own work email and a 6-digit code, so the Log shows who paged. Turn someone off to sign them out on every phone.</p>' +
+    '<p class="hint">Each charge nurse signs in with their own work email, so the Log shows who paged. Turning someone off signs them out everywhere.</p>' +
     (si.shared
       ? '<p class="note">The shared charge RN link (Links tab) still works too. Once your charge nurses are on this list, set Shared charge RN link to Off on the Settings tab.</p>'
-      : '<p class="hint">The shared charge RN link is off, so only the charge nurses on this list can page volunteers.</p>');
+      : '<p class="hint">Only the charge nurses on this list can page volunteers.</p>');
 }
 function viewReport() {
   var rows = ST.report.map(function (r) {
@@ -1328,12 +1321,12 @@ function viewReport() {
   }).join('');
   return '<div class="head"><p class="eyebrow">' + plural(ST.report.length, 'vigil') + ' · ' + total.toFixed(1) + ' companion hours</p><h2>Report</h2></div>' +
     (rows ? '<div class="tbl-wrap"><table><thead><tr><th>Vigil</th><th>Unit</th><th>Started</th><th>Ended</th><th>Outcome</th><th class="num">Hours covered</th><th class="num">Companions</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<p class="empty">No vigils yet.</p>') +
-    '<p class="hint">The measures the NODA Program Guide suggests tracking, with a vigil number in place of the patient’s name. The full record is in the Sheet.</p>' +
+    '<p class="hint">The measures the NODA Program Guide suggests tracking. The full record is in the Sheet.</p>' +
     '<h3 class="sec">Volunteer hours</h3>' +
     (hrows ? '<div class="tbl-wrap"><table class="hours"><thead><tr><th>Volunteer</th><th class="num">Shifts</th><th class="num">Bedside</th><th class="num">Training</th><th class="num">Total</th></tr></thead><tbody>' + hrows +
       '</tbody><tfoot><tr><th>All volunteers</th><th class="num">' + sum.shifts + '</th><th class="num">' + esc(hrsNum(sum.vigil)) + '</th><th class="num">' + esc(hrsNum(sum.training)) + '</th><th class="num">' + esc(hrsNum(sum.total)) + '</th></tr></tfoot></table></div>'
       : '<p class="empty">No hours yet. They start with the training day and the first vigil.</p>') +
-    '<p class="hint">Shifts are vigil shifts; the other columns are hours. Total also counts other NODA service. Tap a name to see that volunteer’s hours record, add hours or make a service letter. The Hours tab of the Sheet lists every entry.</p>' +
+    '<p class="hint">Total includes other NODA service. Tap a name for that volunteer’s hours or a service letter.</p>' +
     '<h3 class="sec">Activity</h3>' + (feed ? '<ul class="feed">' + feed + '</ul>' : '<p class="empty">Nothing yet.</p>');
 }
 function pushStatusText() {
@@ -1357,16 +1350,15 @@ function viewLinks() {
     : '<p class="note">Paste the web app URL into cell B2 on the Settings tab of the Sheet. Links appear here after that.</p>';
   var where = !ST.appUrl
     ? 'Links open the Apps Script web app. To move everyone to the phone app, paste its address next to Phone app URL on the Settings tab.'
-    : si.links ? 'Links open the phone app at <span class="mono">' + esc(ST.appUrl) + '</span>.'
-    : 'Emails open the phone app at <span class="mono">' + esc(ST.appUrl) + '</span> with no personal link in them. People sign in there with their email.';
+    : si.links ? '' : 'Emails open the phone app with no personal link in them. People sign in there with their email.';
   var appOnly = ST.volunteers.filter(function (v) { return !v.pageEmail; }).length;
   var rc = ST.receipts || { sent: 0, confirmed: 0, missed: 0 };
   var checked = rc.confirmed + rc.missed;
   return '<div class="head"><p class="eyebrow">Setup</p><h2>Links and status</h2></div>' +
     '<h3 class="sec first">Charge RN link</h3>' + rn +
-    (si.shared ? '<p class="hint">Share this with charge nurses on pilot units, for example on the unit’s resource page. Anyone with it can page volunteers.' +
-      (ST.chargeNurses ? ' To know who paged, list charge nurses on the Charge RNs tab instead.' : '') + '</p>' : '') +
-    '<p class="hint">' + where + '</p>' +
+    (si.shared ? '<p class="hint">Anyone with this link can page volunteers.' +
+      (ST.chargeNurses ? ' To know who paged, use the Charge RNs tab instead.' : '') + '</p>' : '') +
+    (where ? '<p class="hint">' + where + '</p>' : '') +
     '<h3 class="sec">Status</h3><div class="status">' +
       '<div class="row"><span>Emails left today</span><b>' + ST.emailLeft + '</b></div>' +
       '<div class="row"><span>App notifications</span><b>' + esc(pushStatusText()) + '</b></div>' +
@@ -1377,11 +1369,8 @@ function viewLinks() {
         '<div class="row"><span>Links in emails</span><b>' + (si.links ? 'Personal sign-in links' : 'App address only') + '</b></div>' +
         '<div class="row"><span>Shared charge RN link</span><b>' + (si.shared ? 'On' : 'Off') + '</b></div>' : '') +
     '</div>' +
-    '<p class="hint">Free Google accounts can email 100 people a day, enough for about one vigil a day with 30 volunteers. App notifications don’t count toward the email limit. ' +
-      (ST.appFirst ? 'Once a volunteer’s phone passes a test notification, their pages, reminders and thank-you notes go to the phone only (Phone-only alerts after a test, on the Settings tab). '
-        : 'Volunteers who switch off Email me alerts too get pages, reminders and thank-you notes on their phone only. ') +
-      'Their phones confirm each alert; anything a phone doesn’t confirm within 10 minutes is emailed, and that volunteer’s alert emails turn back on. Sign-up confirmations and cancellations always come by email.' +
-      (ST.signIn ? ' Sign-in codes stop for the day at their limit, or when 30 or fewer emails are left, so pages can still go out. Change the sign-in rows on the Settings tab.' : '') + '</p>' +
+    '<p class="hint">This Google account can email 100 people a day. App notifications don’t count.' +
+      (ST.signIn ? ' Sign-in codes pause when 30 or fewer emails are left, so pages still go out.' : '') + '</p>' +
     '<button type="button" class="btn" data-act="test">Send me a test email</button>' +
     (MODE === 'pwa' ? '<h3 class="sec">Notifications on this phone</h3>' + notifCard() + deviceCard() : '');
 }
