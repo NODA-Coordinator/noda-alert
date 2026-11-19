@@ -22,7 +22,7 @@ const firebaseConfig = {
 
 // 3. Your Web Push certificate key pair (the long public key, about 88 characters).
 //    Firebase console: Project settings > Cloud Messaging > Web configuration > Web Push certificates.
-var NODA_VAPID_KEY = 'PASTE_YOUR_KEY_PAIR_HERE';
+var NODA_VAPID_KEY = 'BEJygTIKLdwSKFT7xWaqrrz67BJyQtn-IC1KdxgGG_FKakRqilBJORpxZTMDnKhoJQbIsxttDWiAThl9Pr_xDE8';
 
 // Leave this line as it is.
 window.NODA_CONFIG = { appsScriptUrl: NODA_APPS_SCRIPT_URL, firebase: typeof firebaseConfig !== 'undefined' ? firebaseConfig : null, vapidKey: NODA_VAPID_KEY };
