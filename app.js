@@ -7,7 +7,7 @@
 (function () {
 'use strict';
 var H = 3600e3, MIN = 60e3, DAY = 24 * H;
-var APP_VERSION = '2.5.0';
+var APP_VERSION = '2.6.0';
 var FIREBASE_DIR = './vendor/firebase/12.19.0/';
 var GAS = !!(window.google && google.script && google.script.run);
 var MODE = GAS ? 'gas' : (document.documentElement.getAttribute('data-app') === 'pwa' ? 'pwa' : 'none');
@@ -34,6 +34,32 @@ var rolesEl = document.createElement('div');
 rolesEl.id = 'roles'; rolesEl.className = 'roles'; rolesEl.hidden = true;
 tabs.parentNode.insertBefore(rolesEl, tabs);
 var toastTimer = null;
+// Version 2.6: the Text size setting (1 to 5; 2 is the default) and the theme ('light', 'dark' or 'auto' to match
+// the phone), kept on this phone. The logo's address comes from the header, so both versions use the same one.
+var LOOK = { size: 2, theme: 'auto' };
+var SIZE_WORD = { 1: 'smaller than default', 2: 'default', 3: 'a little larger than default', 4: 'larger than default', 5: 'largest' };
+var DARK_BAR = '#0F1124';
+var aaBtn = document.getElementById('aa');
+var LOGO = (function () { var m = document.querySelector('.top .mark'); return m && m.getAttribute('src') ? m.getAttribute('src') : ''; })();
+var ICON = {
+  heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
+  cal: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  home: '<path d="M4 11.5 12 4l8 7.5"/><path d="M6.5 10v10h11V10"/>',
+  people: '<circle cx="9" cy="8" r="3"/><path d="M3.5 20c0-3.2 2.5-5.6 5.5-5.6s5.5 2.4 5.5 5.6"/><circle cx="17" cy="9" r="2.4"/><path d="M16.2 14.4c2.6.3 4.3 2.5 4.3 5.6"/>',
+  chart: '<path d="M5 20V11M12 20V5M19 20v-6"/>',
+  sliders: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  chev: '<path d="M9 5l7 7-7 7"/>',
+  pin: '<path d="M12 21s-6.5-6.2-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21z"/><circle cx="12" cy="9.8" r="2.3"/>',
+  shield: '<path d="M12 3.5 5.5 6v5.2c0 4.4 2.8 7.7 6.5 9.3 3.7-1.6 6.5-4.9 6.5-9.3V6z"/>',
+  bell: '<path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.5H5z"/><path d="M10 20.5h4"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  lock: '<rect x="5.5" y="11" width="13" height="9" rx="2"/><path d="M8.5 11V8a3.5 3.5 0 0 1 7 0v3"/>',
+  letter: '<rect x="4" y="6" width="16" height="12" rx="2"/><path d="m4.5 7 7.5 6 7.5-6"/>'
+};
+function svg(name, cls) { return '<svg class="' + (cls || 'ico') + '" viewBox="0 0 24 24" aria-hidden="true">' + (ICON[name] || '') + '</svg>'; }
 
 /* ---------- helpers ---------- */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -71,6 +97,108 @@ var LS = {
   set: function (k, v) { try { window.localStorage.setItem('noda.' + k, v); } catch (e) { /* not saved */ } },
   del: function (k) { try { window.localStorage.removeItem('noda.' + k); } catch (e) { /* nothing to remove */ } }
 };
+// "Good morning", "Good afternoon", "Good evening"
+function greeting() { var h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
+function firstName(n) { return String(n || '').trim().split(/\s+/)[0] || ''; }
+// "Sam O." -> "SO", "Maria Keller" -> "MK"
+function initials(n) {
+  var p = String(n || '').replace(/[^A-Za-zÀ-ɏ\s'-]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  return ((p[0] || '').charAt(0) + (p.length > 1 ? p[p.length - 1].charAt(0) : '')).toUpperCase() || '?';
+}
+// The way the server writes a time in a page: "3:30 PM", "12:00 PM".
+function hmm(ts) { var d = new Date(ts), h = d.getHours(), ap = h < 12 ? 'AM' : 'PM'; return (h % 12 || 12) + ':' + pad(d.getMinutes()) + ' ' + ap; }
+// "from 2 to 4 PM", "from 11 PM to 1 AM"
+function fromTo(a, b) { var A = t12(a), B = t12(b); return A.slice(-2) === B.slice(-2) ? A.slice(0, -3) + ' to ' + B : A + ' to ' + B; }
+// A stretch of open hours, by when it starts: "This afternoon", "Tonight", "Overnight", "Tomorrow morning", "Sun, 11/29 evening".
+function partLabel(t, now) {
+  if (t <= now) return 'Open now';
+  var h = new Date(t).getHours(), diff = Math.round((midnight(t) - midnight(now)) / DAY);
+  var part = h < 5 ? 'overnight' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 21 ? 'evening' : 'night';
+  if (diff === 0) return { overnight: 'Overnight', morning: 'This morning', afternoon: 'This afternoon', evening: 'This evening', night: 'Tonight' }[part];
+  if (diff === 1 && part === 'overnight') return 'Overnight';
+  var day = diff === 1 ? 'Tomorrow' : dayLabel(t);
+  return day + ' ' + (part === 'overnight' ? 'early morning' : part);
+}
+
+/* ---------- version 2.6: Text size and theme ---------- */
+function lookLoad() {
+  var s = Math.round(+(LS.get('textSize') || 2));
+  LOOK.size = s >= 1 && s <= 5 ? s : 2;
+  var t = LS.get('theme');
+  LOOK.theme = t === 'light' || t === 'dark' ? t : 'auto';
+  applyLook();
+}
+function applyLook() {
+  var h = document.documentElement;
+  h.setAttribute('data-ts', String(LOOK.size));
+  if (LOOK.theme === 'auto') h.removeAttribute('data-theme'); else h.setAttribute('data-theme', LOOK.theme);
+  barColors(h.getAttribute('data-role') || '');
+}
+// The phone's status bar: the role's color in light, navy in dark.
+function barColors(role) {
+  var col = ROLE_THEME[role] || ROLE_THEME.vol;
+  var light = document.querySelector('meta[name="theme-color"][media="(prefers-color-scheme: light)"]');
+  var dark = document.querySelector('meta[name="theme-color"][media="(prefers-color-scheme: dark)"]');
+  var a = LOOK.theme === 'dark' ? DARK_BAR : col, b = LOOK.theme === 'light' ? col : DARK_BAR;
+  if (light && light.getAttribute('content') !== a) light.setAttribute('content', a);
+  if (dark && dark.getAttribute('content') !== b) dark.setAttribute('content', b);
+}
+function sizeText(s) { return 'Size ' + s + ' of 5: ' + SIZE_WORD[s]; }
+function setSize(n) {
+  n = Math.max(1, Math.min(5, Math.round(+n || 2)));
+  LOOK.size = n; LS.set('textSize', String(n)); applyLook(); lookRefresh();
+}
+function setTheme(t) {
+  LOOK.theme = t === 'light' || t === 'dark' ? t : 'auto';
+  if (LOOK.theme === 'auto') LS.del('theme'); else LS.set('theme', LOOK.theme);
+  applyLook();
+}
+// Update the Text size screen in place, so the slider and buttons keep focus.
+function lookRefresh() {
+  var r = document.getElementById('ts-range'), s = LOOK.size;
+  if (r) { if (+r.value !== s) r.value = String(s); r.setAttribute('aria-valuetext', sizeText(s)); r.style.setProperty('--p', ((s - 1) * 25) + '%'); }
+  var now = document.getElementById('ts-now'); if (now) now.textContent = sizeText(s);
+  var dn = app.querySelector('[data-act="ts-down"]'), up = app.querySelector('[data-act="ts-up"]');
+  if (dn) dn.disabled = s <= 1;
+  if (up) up.disabled = s >= 5;
+}
+function openLook() {
+  if (VIEW.name === 'textsize') return;
+  if (VIEW.name === 'request' && DRAFT) { var f = document.getElementById('req'); if (f) readForm(f); }
+  VIEW = { name: 'textsize', back: VIEW, backUI: UI, y: window.scrollY || 0 };
+  UI = {}; render(); window.scrollTo(0, 0);
+  var h = app.querySelector('h2'); if (h) { h.setAttribute('tabindex', '-1'); try { h.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
+}
+function closeLook() {
+  var v = VIEW.name === 'textsize' ? VIEW : null;
+  VIEW = v && v.back ? v.back : { name: 'home' }; UI = v && v.backUI ? v.backUI : {};
+  render(); window.scrollTo(0, v ? v.y : 0);
+  if (aaBtn) { try { aaBtn.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
+}
+function lookView() {
+  var s = LOOK.size;
+  var themes = [['light', 'Light'], ['dark', 'Dark'], ['auto', 'Match my phone']].map(function (t) {
+    var id = 'th-' + t[0];
+    return '<label class="th th-' + t[0] + '" for="' + id + '"><input type="radio" name="theme" id="' + id + '" value="' + t[0] + '"' + (LOOK.theme === t[0] ? ' checked' : '') + '>' +
+      '<span class="thbox"><span class="tsw" aria-hidden="true"><i></i><i></i></span>' + t[1] + '</span></label>';
+  }).join('');
+  return '<div class="sheet-hd"><h2>Text size and theme</h2><button type="button" class="pillbtn close" data-act="look-close">' + svg('close') + 'Close</button></div>' +
+    '<p class="lede">Choose what is easiest for you to read. This phone remembers it.</p>' +
+    '<section class="card">' +
+      '<label class="lab2" for="ts-range">Text size</label>' +
+      '<div class="sl"><span class="sa" aria-hidden="true">A</span><div class="slw">' +
+        '<input type="range" id="ts-range" class="range" min="1" max="5" step="1" value="' + s + '" aria-valuetext="' + esc(sizeText(s)) + '" data-fill="' + ((s - 1) * 25) + '">' +
+        '<div class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><span class="defl" aria-hidden="true">Default</span></div>' +
+      '<span class="sA" aria-hidden="true">A</span></div>' +
+      '<p class="tsnow" id="ts-now">' + esc(sizeText(s)) + '</p>' +
+      '<div class="btns2"><button type="button" class="btn outline" data-act="ts-down"' + (s <= 1 ? ' disabled' : '') + '>Smaller</button>' +
+      '<button type="button" class="btn outline" data-act="ts-up"' + (s >= 5 ? ' disabled' : '') + '>Larger</button></div>' +
+    '</section>' +
+    '<p class="lab">Preview</p>' +
+    '<div class="prev" aria-hidden="true"><p class="h2">A patient needs company.</p><p class="sub">12 hours are still open.</p><span class="pri">Sit 2–4 PM today</span></div>' +
+    '<section class="card"><fieldset><legend class="lab2">Theme</legend><div class="themes">' + themes + '</div></fieldset></section>' +
+    '<div class="more"><button type="button" class="btn primary big block" data-act="look-close">Done</button></div>';
+}
 
 /* ---------- phone app settings (config.js) ---------- */
 function readConfig() {
@@ -145,7 +273,7 @@ function toast(msg) {
 }
 function editing() {
   var a = document.activeElement;
-  return VIEW.name === 'request' || VIEW.name === 'letter' || VIEW.name === 'bulk' || UI.addHours || UI.fix || UI.addVol || UI.addRn ||
+  return VIEW.name === 'request' || VIEW.name === 'letter' || VIEW.name === 'bulk' || VIEW.name === 'textsize' || UI.addHours || UI.fix || UI.addVol || UI.addRn ||
     UI.endAsk || UI.confirmRelease || UI.confirmReset || UI.confirmRn || UI.confirmSignOut ||
     (a && /INPUT|SELECT|TEXTAREA/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio');
 }
@@ -221,25 +349,64 @@ function runs(v, now) {
 }
 
 /* ---------- shared pieces ---------- */
-function strip(v, s, now) {
-  var cls = { done: 'd', missed: 'm', bedside: 'f', due: 'f', taken: 'f', open: 'o', opennow: 'o', cancelled: 'c' };
-  var segs = s.cells.map(function (x) { return '<i class="' + cls[x.st] + '" title="' + r24(x.start, x.end) + '"></i>'; }).join('');
-  var mark = '';
-  if (v.status === 'active' && s.cells.length) {
+// Styles that come from data (the "now" line, a block's width, the slider's fill) are set here, after each
+// render: the phone app's Content Security Policy doesn't allow style attributes in the HTML.
+function placeNowMarks() {
+  Array.prototype.forEach.call(app.querySelectorAll('[data-p]'), function (m) { m.style.left = m.getAttribute('data-p') + '%'; });
+  Array.prototype.forEach.call(app.querySelectorAll('[data-w]'), function (m) { m.style.flexGrow = m.getAttribute('data-w'); });
+  Array.prototype.forEach.call(app.querySelectorAll('[data-fill]'), function (m) { m.style.setProperty('--p', m.getAttribute('data-fill') + '%'); });
+}
+// Version 2.6: the vigil as a row of hours. Covered in green, open outlined in amber, the volunteer's own hours in
+// their color, not covered in red; hours that have passed are faded. The sentence above it says the same in words.
+function ribbon(v, s, now) {
+  var me = ST.me ? ST.me.id : null, vol = ST.role === 'vol', mine = false, missed = false;
+  var segs = s.cells.map(function (x) {
+    var c;
+    if (x.st === 'cancelled') c = 'c';
+    else if (x.s) { c = me && x.s.vol === me ? 'y' : 'f'; if (c === 'y') mine = true; }
+    else if (x.st === 'missed') { c = 'm'; missed = true; }
+    else c = 'o';
+    if (x.end <= now && c !== 'm') c += ' d';
+    return '<i class="' + c + '"></i>';
+  }).join('');
+  var mark = '', n = s.cells.length;
+  if (v.status === 'active' && n) {
     var p = (now - v.start) / (vEnd(v) - v.start);
     if (p >= 0 && p <= 1) mark = '<b class="nowmark" data-p="' + (p * 100).toFixed(2) + '"></b>';
   }
-  return '<div class="strip' + (s.cells.length > 36 ? ' dense' : '') + '" aria-hidden="true">' + segs + mark + '</div>';
+  var tick = function (k) { var t = v.start + Math.round(n * k / 4) * H; return vol ? t12(t) : t24(t); };
+  return '<div class="ribbon' + (n > 36 ? ' dense' : '') + '" aria-hidden="true">' + segs + mark + '</div>' +
+    '<div class="ticks" aria-hidden="true"><span>' + tick(0) + '</span><span class="t2">' + tick(1) + '</span><span>' + tick(2) + '</span><span class="t4">' + tick(3) + '</span><span>' + tick(4) + '</span></div>' +
+    '<div class="legend" aria-hidden="true"><span><i class="f"></i>Covered</span><span><i class="o"></i>Open</span>' +
+      (mine ? '<span><i class="y"></i>You</span>' : '') + (missed ? '<span><i class="m"></i>Not covered</span>' : '') + '</div>';
 }
-function placeNowMarks() { Array.prototype.forEach.call(app.querySelectorAll('.nowmark'), function (m) { m.style.left = m.getAttribute('data-p') + '%'; }); }
+// The next 12 hours of a vigil as labeled blocks: who's there, and what's open.
+function lane(v, now) {
+  var from = now <= v.start ? v.start : v.start + Math.floor((now - v.start) / H) * H, to = Math.min(vEnd(v), from + 12 * H);
+  if (to <= from) return '';
+  var blocks = segments(v, now).map(function (g) {
+    var a = Math.max(g.start, from), b = Math.min(g.end, to), h = Math.round((b - a) / H);
+    if (h <= 0) return '';
+    var cls = g.s ? 'lb' : g.st === 'missed' ? 'lb mi' : g.st === 'cancelled' ? 'lb mi' : 'lb op';
+    var label = g.s ? (h >= 3 ? g.s.volName : initials(g.s.volName)) : g.st === 'missed' ? '—' : (h >= 3 ? 'Open ' + h + ' h' : h + ' h');
+    var short = g.s ? initials(g.s.volName) : g.st === 'missed' ? '—' : h + ' h';
+    // The long label, and a short one for the largest text sizes (app.css shows one of them).
+    return '<span class="' + cls + '" data-w="' + h + '"><span class="ll">' + esc(label) + '</span><span class="ls">' + esc(short) + '</span></span>';
+  }).join('');
+  var span = to - from, p = (now - from) / span;
+  var mark = p >= 0 && p <= 1 ? '<b class="nowmark" data-p="' + (p * 100).toFixed(2) + '"></b>' : '';
+  var tick = function (k) { return t24(from + Math.round(span / H * k / 4) * H); };
+  return '<span class="lane" aria-hidden="true">' + blocks + mark + '</span>' +
+    '<span class="axis" aria-hidden="true"><span>' + tick(0) + '</span><span class="t2">' + tick(1) + '</span><span>' + tick(2) + '</span><span class="t4">' + tick(3) + '</span><span>' + tick(4) + '</span></span>';
+}
 function vigilCard(v, mode, now) {
   var s = stats(v, now), meta;
   if (v.status !== 'active') meta = '<span>Ended ' + t24(v.ended) + ' · ' + esc(v.reason) + '</span>';
-  else if (mode === 'vol') meta = '<span>' + plural(s.open, 'open hour') + '</span>' + (s.gap ? '<span class="warn">Next open: ' + esc(dayLabel(s.gap.start)) + ' ' + t12(s.gap.start) + '</span>' : '');
-  else meta = '<span>Next 12 h: ' + plural(s.open12, 'available hour') + '</span>' + (s.gap ? '<span class="warn">Gap at ' + t24(s.gap.start) + '</span>' : '<span>Fully covered</span>');
-  return '<button type="button" class="card card-btn" data-act="open" data-id="' + esc(v.id) + '">' +
-    '<div class="row"><span class="unit">' + esc(v.unitName) + '</span><span class="vid">' + esc(v.id) + '</span></div>' +
-    strip(v, s, now) + '<div class="meta">' + meta + '</div></button>';
+  else meta = '<span>Next 12 h: ' + plural(s.open12, 'open hour') + '</span>' + (s.gap ? '<span class="warn">' + (s.gap.start <= now ? 'Open now' : 'Gap at ' + t24(s.gap.start)) + '</span>' : '<span>Fully covered</span>');
+  return '<button type="button" class="card card-btn vcard" data-act="open" data-id="' + esc(v.id) + '">' +
+    '<span class="rw"><span class="unit">' + esc(v.unitName) + '</span><span class="vid">' + esc(v.id) + '</span></span>' +
+    (v.status === 'active' ? '<span class="lanehd"><span>Next 12 hours</span><span>Now ' + t24(now) + '</span></span>' + lane(v, now) : '') +
+    '<span class="meta">' + meta + '</span></button>';
 }
 function noneView() {
   if (MODE === 'pwa') return signInView('revoked');
@@ -498,14 +665,14 @@ function getAppCard() {
   return '<div class="getapp"><span><b>NODA Alert has a phone app</b>' + (appOnly() && ST.role === 'vol' ? 'NODA pages come only through the phone app.' : ST.push && ST.role !== 'rn' ? 'It can show pages as notifications.' : 'It opens like an app from your home screen.') + '</span>' +
     '<a class="btn small primary" href="' + esc(ST.appUrl + '#k=' + KEY) + '" target="_top" rel="noopener">Open the phone app</a></div>';
 }
-function deviceCard() {
-  if (MODE !== 'pwa' || !ST || ST.role === 'none') return '';
+function deviceCard(before) {
+  if (MODE !== 'pwa' || !ST || ST.role === 'none') return before || '';
   var who = ST.role === 'rn' ? (ST.name ? ST.name + ' (charge RN)' : 'Charge RN') : ST.role === 'coord' ? 'NODA coordinator' : ST.me.name;
   var again = emailSignIn() ? ' You can sign in again with your email.' : ' You’ll need your link to sign in again.';
   var body = UI.confirmSignOut
     ? '<div class="confirm"><p>Sign out of NODA Alert on this phone?' + (pushState() === 'on' ? ' Notifications on this phone stop.' : '') + again + '</p><div class="row"><button type="button" class="btn danger" data-act="signout">Sign out</button><button type="button" class="btn" data-act="signout-cancel">Cancel</button></div></div>'
     : '<div class="row"><button type="button" class="btn small" data-act="signout-ask">Sign out of this phone</button></div>';
-  return '<h3 class="sec">This phone</h3><div class="card device"><p class="m0">Signed in as <b>' + esc(who) + '</b>.</p>' + body +
+  return '<h3 class="sec">This phone</h3>' + (before ? '<div class="card-gap">' + before + '</div>' : '') + '<div class="card device"><p class="m0">Signed in as <b>' + esc(who) + '</b>.</p>' + body +
     '<p class="ver">NODA Alert ' + APP_VERSION + (ST.version ? ' · server ' + esc(ST.version) : '') + '</p></div>';
 }
 
@@ -782,26 +949,62 @@ function viewRN() {
   if (VIEW.name === 'vigil' && vigilById(VIEW.id)) return rnVigil(vigilById(VIEW.id));
   return rnHome();
 }
+// How many volunteers a page reaches, in words.
+function reachText() {
+  var n = reachN();
+  return appOnly() ? plural(n, 'volunteer') + ' can get pages' : plural(n, 'volunteer is', 'volunteers are') + ' on call';
+}
+// Version 2.6: the charge nurse's home (and the coordinator's Today tab): a greeting, the Request button, and each
+// active vigil's next 12 hours. The coordinator also gets a one-sentence summary, three numbers and "Needs you".
 function rnHome() {
-  var now = Date.now();
+  var now = Date.now(), coord = ST.role === 'coord';
   var active = ST.vigils.filter(function (v) { return v.status === 'active'; }).reverse();
   var ended = ST.vigils.filter(function (v) { return v.status !== 'active'; }).reverse();
-  // The coordinator's overview: hours that still need a companion in the next 12 hours, across active vigils.
-  var avail = active.reduce(function (n, v) { return n + stats(v, now).open12; }, 0);
-  var overview = ST.role === 'coord'
-    ? '<div class="stats overview"><div><b>' + active.length + '</b><span>' + (active.length === 1 ? 'active vigil' : 'active vigils') + '</span></div>' +
-      '<div><b>' + avail + '</b><span>available hours, next 12 h</span></div><div><b>' + reachN() + '</b><span>' + (appOnly() ? 'can get pages' : 'on call') + '</span></div></div>' : '';
+  var open12 = active.reduce(function (n, v) { return n + stats(v, now).open12; }, 0);
+  var req = ST.units.length
+    ? '<button type="button" class="btn primary big block" data-act="new">Request a NODA volunteer</button>'
+    : '<p class="note">Add at least one unit on the Units tab of the Sheet before paging.</p>';
+  var reachNote = appOnly() && !reachN() ? '<p class="note">No volunteers have NODA notifications on yet, so a page won’t reach anyone.</p>' : '';
+  // A phone gets pages only while NODA is in Volunteer mode on it (version 2.5, when email doesn't back them up).
+  var modeNote = appOnly() && MODE === 'pwa' && hasRole('vol') ? '<p class="hint">You get NODA pages on this phone only in Volunteer mode.</p>' : '';
+  var list = active.length ? '<div class="stack">' + active.map(function (v) { return vigilCard(v, 'rn', now); }).join('') + '</div>' : '<p class="empty">No active vigils.</p>';
+  var idle = '';
+  if (active.length) {
+    var busy = {}; active.forEach(function (v) { busy[v.unitId] = 1; });
+    var free = ST.units.filter(function (u) { return u.active !== false && !busy[u.id]; }).map(function (u) { return u.name; });
+    if (free.length && free.length < 6) idle = '<p class="hint">' + esc(free.length === 1 ? free[0] + ' has' : free.slice(0, -1).join(', ') + ' and ' + free[free.length - 1] + ' have') + ' no active vigil.</p>';
+  }
+  var endedHTML = ended.length ? '<h3 class="sec">Ended in the last day</h3><div class="stack">' + ended.map(function (v) { return vigilCard(v, 'rn', now); }).join('') + '</div>' : '';
+  if (!coord) {
+    return installBanner() + getAppCard() +
+      '<h2 class="greet">' + greeting() + (ST.name ? ', ' + esc(firstName(ST.name)) : '') + '.</h2>' +
+      req + '<p class="hint">' + esc(reachText()) + '.</p>' + reachNote + modeNote +
+      '<h3 class="sec">Active now</h3>' + list + idle + endedHTML + deviceCard();
+  }
+  var sum = active.length
+    ? (active.length === 1 ? 'One vigil is active. ' : active.length + ' vigils are active. ') +
+      (open12 ? plural(open12, 'hour') + ' in the next 12 ' + (open12 === 1 ? 'still needs' : 'still need') + ' a companion.' : 'Every hour in the next 12 is covered.')
+    : 'No vigils are active.';
+  var num = function (b, label) { return '<div class="num"><b>' + b + '</b><span>' + label + '</span></div>'; };
   return installBanner() + getAppCard() +
-    '<div class="head"><h2>NODA vigils</h2></div>' + overview +
-    (ST.units.length ? '<button type="button" class="btn primary big block" data-act="new">Request a NODA volunteer</button>' : '<p class="note">Add at least one unit on the Units tab of the Sheet before paging.</p>') +
-    (appOnly() && !reachN() ? '<p class="note">No volunteers have NODA notifications on yet, so a page won’t reach anyone.</p>'
-      : ST.role === 'rn' ? '<p class="hint">' + plural(reachN(), 'volunteer is', 'volunteers are') + ' on call.</p>' : '') +
-    // A phone gets pages only while NODA is in Volunteer mode on it (version 2.5, when email doesn't back them up).
-    (appOnly() && MODE === 'pwa' && hasRole('vol') ? '<p class="hint">You get NODA pages on this phone only in Volunteer mode.</p>' : '') +
-    '<h3 class="sec">Active now</h3>' +
-    (active.length ? '<div class="stack">' + active.map(function (v) { return vigilCard(v, 'rn', now); }).join('') + '</div>' : '<p class="empty">No active vigils.</p>') +
-    (ended.length ? '<h3 class="sec">Ended in the last day</h3><div class="stack">' + ended.map(function (v) { return vigilCard(v, 'rn', now); }).join('') + '</div>' : '') +
-    (ST.role === 'rn' ? deviceCard() : '');
+    '<h2 class="greet">' + greeting() + '.</h2><p class="sum">' + esc(sum) + '</p>' +
+    '<div class="nums">' + num(active.length, active.length === 1 ? 'active vigil' : 'active vigils') + num(open12, 'open hours, next 12 h') +
+      num(reachN() + (appOnly() ? '<small> of ' + ST.onCall + '</small>' : ''), appOnly() ? 'can get pages' : 'on call') + '</div>' +
+    reachNote + modeNote + list + idle + needsYou() +
+    '<div class="more">' + req + '</div>' + endedHTML;
+}
+// The coordinator's to-do list: letters asked for, and on-call volunteers whose pages can't reach them.
+function needsYou() {
+  var chev = svg('chev', 'ico chev'), items = [];
+  (ST.volunteers || []).forEach(function (v) {
+    if (letterOpen(v)) items.push('<button type="button" class="li" data-act="vol-open" data-id="' + esc(v.id) + '"><span class="av">' + esc(initials(v.name)) + '</span><span class="tx">' + esc(v.name) + ' asked for a service letter</span>' + chev + '</button>');
+  });
+  if (appOnly()) {
+    var n = (ST.volunteers || []).filter(function (v) { return v.onCall && !v.devices; }).length;
+    if (n) items.push('<button type="button" class="li" data-act="tab" data-tab="volunteers"><span class="av g">' + svg('bell') + '</span><span class="tx">' + plural(n, 'volunteer') + ' on call can’t get pages yet</span>' + chev + '</button>');
+  }
+  if (!items.length) return '';
+  return '<h3 class="sec">Needs you</h3><div class="card list">' + items.join('') + '</div>';
 }
 function opt(name, i, label, on) {
   var id = 'f-' + name + '-' + i;
@@ -812,31 +1015,48 @@ function seg(name, val, label, cur) {
   return '<label for="' + id + '"><input type="radio" id="' + id + '" name="' + name + '" value="' + esc(val) + '"' + (String(cur) === String(val) ? ' checked' : '') + '><span>' + esc(label) + '</span></label>';
 }
 function reqOK(d) { return d.crit1.length > 0 && d.crit2.length > 0 && d.consent; }
+function reqStart(d) { return Math.floor(Date.now() / (30 * MIN)) * 30 * MIN + d.startIn * H; }
 function covLine(d) {
-  var start = Math.floor(Date.now() / (30 * MIN)) * 30 * MIN + d.startIn * H, end = start + d.windowH * H;
+  var start = reqStart(d), end = start + d.windowH * H;
   return 'Covers ' + dayWord(start) + ' ' + t24(start) + ' to ' + dayWord(end) + ' ' + t24(end) + ', ' + d.windowH + ' hours.';
 }
+function unitName(id) { for (var i = 0; i < ST.units.length; i++) if (ST.units[i].id === id) return ST.units[i].name; return ''; }
+// What volunteers' phones show, worded as the server words it (pageMsg_ in Code.gs).
+function pagePreview(d) {
+  var r = rules(), start = reqStart(d), soon = start <= Date.now() + 5 * MIN;
+  var body = 'A patient on ' + unitName(d.unitId) + ' needs a companion, ' + (soon ? 'starting now' : 'from ' + hmm(start)) + ', for the next ' + d.windowH +
+    ' hours. Sign up for ' + r.min + ' to ' + r.max + ' hours.' + (d.ppe ? ' PPE needed.' : '');
+  return '<div class="nh">' + (LOGO ? '<img src="' + esc(LOGO) + '" alt="">' : '') + 'NODA Alert<span>now</span></div>' +
+    '<p class="nt">NODA page</p><p class="nb">' + esc(body) + '</p>';
+}
+// Where a charge nurse paged from last time (unit, check-in place, PPE), kept on this phone.
+function rnLast() { try { var o = JSON.parse(LS.get('rnLast') || 'null'); return o && typeof o === 'object' ? o : null; } catch (e) { return null; } }
 function rnRequest() {
   var d = DRAFT, L = ST.lists, ok = reqOK(d);
-  return '<button type="button" class="btn quiet back" data-act="home">‹ Vigils</button>' +
-    '<div class="head"><p class="eyebrow">New request</p><h2>Request a NODA volunteer</h2></div>' +
+  var unitSeg = ST.units.map(function (u) { return seg('unit', u.id, u.name, d.unitId); }).join('');
+  var inSeg = L.checkIn.map(function (c) { return seg('checkIn', c, c, d.checkIn); }).join('');
+  return '<div class="back-row"><button type="button" class="pillbtn back" data-act="home">' + svg('back') + 'Back</button></div>' +
+    '<p class="reach"><span class="rchip">' + (ST.role === 'coord' ? 'Coordinator' : 'Charge nurse') + '</span><span>' + esc(reachText()) + '</span></p>' +
+    '<h2 class="h1">Request a NODA volunteer</h2>' +
     '<form id="req" class="form" novalidate>' +
-      '<fieldset><legend>Patient meets at least one</legend>' + L.crit1.map(function (t, i) { return opt('crit1', i, t, d.crit1.indexOf(i) > -1); }).join('') + '</fieldset>' +
-      '<fieldset><legend>And at least one</legend>' + L.crit2.map(function (t, i) { return opt('crit2', i, t, d.crit2.indexOf(i) > -1); }).join('') + '</fieldset>' +
-      '<label class="opt consent" for="f-consent"><input type="checkbox" id="f-consent" name="consent"' + (d.consent ? ' checked' : '') + '><span><b>Permission given:</b> the patient or surrogate agreed, or the attending provider approved (no surrogate)</span></label>' +
-      '<fieldset><legend>Where</legend>' +
-        '<label class="field" for="f-unit"><span>Unit</span><select id="f-unit">' + ST.units.map(function (u) { return '<option value="' + esc(u.id) + '"' + (u.id === d.unitId ? ' selected' : '') + '>' + esc(u.name) + '</option>'; }).join('') + '</select></label>' +
-        '<label class="field" for="f-checkin"><span>Volunteers check in</span><select id="f-checkin">' + L.checkIn.map(function (c) { return '<option value="' + esc(c) + '"' + (c === d.checkIn ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select></label>' +
-        '<div class="field"><span>PPE at the bedside</span><div class="seg">' + seg('ppe', 'no', 'None', d.ppe ? 'yes' : 'no') + seg('ppe', 'yes', 'Needed', d.ppe ? 'yes' : 'no') + '</div></div>' +
+      '<fieldset><legend class="fl">Patient meets at least one</legend>' + L.crit1.map(function (t, i) { return opt('crit1', i, t, d.crit1.indexOf(i) > -1); }).join('') + '</fieldset>' +
+      '<fieldset><legend class="fl">And at least one</legend>' + L.crit2.map(function (t, i) { return opt('crit2', i, t, d.crit2.indexOf(i) > -1); }).join('') + '</fieldset>' +
+      '<fieldset><legend class="fl">Permission</legend><label class="opt consent" for="f-consent"><input type="checkbox" id="f-consent" name="consent"' + (d.consent ? ' checked' : '') + '><span>The patient or surrogate agreed, or the attending provider approved (no surrogate).</span></label></fieldset>' +
+      '<fieldset><legend class="fl">Where' + (d.remembered ? ' <span class="rem">· remembered from last time</span>' : '') + '</legend>' +
+        '<div class="field"><span class="fl2" id="l-unit">Unit</span><div class="seg" role="radiogroup" aria-labelledby="l-unit">' + unitSeg + '</div></div>' +
+        '<div class="field"><span class="fl2" id="l-checkin">Volunteers check in</span><div class="seg" role="radiogroup" aria-labelledby="l-checkin">' + inSeg + '</div></div>' +
+        '<div class="field"><span class="fl2" id="l-ppe">PPE at the bedside</span><div class="seg" role="radiogroup" aria-labelledby="l-ppe">' + seg('ppe', 'no', 'None', d.ppe ? 'yes' : 'no') + seg('ppe', 'yes', 'Needed', d.ppe ? 'yes' : 'no') + '</div></div>' +
       '</fieldset>' +
-      '<fieldset><legend>Coverage</legend>' +
-        '<div class="field"><span>Start</span><div class="seg">' + seg('startIn', 0, 'Now', d.startIn) + seg('startIn', 1, 'In 1 hour', d.startIn) + seg('startIn', 2, 'In 2 hours', d.startIn) + '</div></div>' +
-        '<div class="field"><span>Cover the next</span><div class="seg">' + [12, 24, 48, 72].map(function (h) { return seg('windowH', h, h + ' hours', d.windowH); }).join('') + '</div></div>' +
+      '<fieldset><legend class="fl">When</legend>' +
+        '<div class="field"><span class="fl2" id="l-start">Start</span><div class="seg" role="radiogroup" aria-labelledby="l-start">' + seg('startIn', 0, 'Now', d.startIn) + seg('startIn', 1, 'In 1 hour', d.startIn) + seg('startIn', 2, 'In 2 hours', d.startIn) + '</div></div>' +
+        '<div class="field"><span class="fl2" id="l-win">Cover the next</span><div class="seg" role="radiogroup" aria-labelledby="l-win">' + [12, 24, 48, 72].map(function (h) { return seg('windowH', h, h + ' hours', d.windowH); }).join('') + '</div></div>' +
         '<p class="hint" id="cov-sum">' + esc(covLine(d)) + '</p>' +
       '</fieldset>' +
-      '<p class="note">The page has no patient details. Share those in person at check-in.</p>' +
-      '<button type="submit" class="btn primary big block" id="send"' + (ok ? '' : ' disabled') + '>Page ' + plural(reachN(), 'on-call volunteer') + '</button>' +
-      '<p class="hint" id="why"' + (ok ? ' hidden' : '') + '>Check one item in each list and confirm permission to send.</p>' +
+      '<fieldset><legend class="fl">Volunteers will see</legend><div class="nprev" id="req-prev">' + pagePreview(d) + '</div>' +
+        '<p class="hint">The page has no patient details. Share those in person at check-in.</p></fieldset>' +
+      '<div class="foot"><button type="submit" class="btn primary big block" id="send"' + (ok ? '' : ' disabled') + '>Page ' + plural(reachN(), 'on-call volunteer') + '</button>' +
+        '<p class="hint" id="why"' + (ok ? ' hidden' : '') + '>Check one item in each list and confirm permission to send.</p>' +
+        '<p class="fine">' + svg('lock') + 'No patient details are sent.</p></div>' +
     '</form>';
 }
 function readForm(f) {
@@ -844,8 +1064,8 @@ function readForm(f) {
   function radio(name, def) { var x = f.querySelector('input[name="' + name + '"]:checked'); return x ? x.value : def; }
   DRAFT.crit1 = picks('crit1'); DRAFT.crit2 = picks('crit2');
   DRAFT.consent = f.querySelector('#f-consent').checked;
-  DRAFT.unitId = f.querySelector('#f-unit').value;
-  DRAFT.checkIn = f.querySelector('#f-checkin').value;
+  DRAFT.unitId = radio('unit', DRAFT.unitId);
+  DRAFT.checkIn = radio('checkIn', DRAFT.checkIn);
   DRAFT.ppe = radio('ppe', 'no') === 'yes';
   DRAFT.startIn = +radio('startIn', 0); DRAFT.windowH = +radio('windowH', 24);
 }
@@ -854,6 +1074,7 @@ function updateReq() {
   readForm(f);
   var ok = reqOK(DRAFT);
   document.getElementById('cov-sum').textContent = covLine(DRAFT);
+  document.getElementById('req-prev').innerHTML = pagePreview(DRAFT);
   document.getElementById('send').disabled = !ok;
   document.getElementById('why').hidden = ok;
 }
@@ -892,31 +1113,32 @@ function rnVigil(v) {
   var actions = '';
   if (v.status === 'active') {
     if (UI.endAsk === v.id) {
-      actions = '<div class="card endpanel"><p class="h">End this vigil?</p><fieldset><legend class="eyebrow">Reason</legend>' +
+      actions = '<div class="card endpanel"><p class="h">End this vigil?</p><fieldset><legend class="fl">Reason</legend>' +
         ST.lists.reasons.map(function (r, i) { var id = 'f-reason-' + i; return '<label class="opt" for="' + id + '"><input type="radio" id="' + id + '" name="reason" value="' + esc(r) + '"' + (UI.reason === r ? ' checked' : '') + '><span>' + esc(r) + '</span></label>'; }).join('') +
         '</fieldset><p class="hint m0">' + (np ? plural(np, 'booked volunteer') + ' will be told their hours are canceled.' : 'No one is signed up for later hours.') + '</p>' +
         '<div class="row"><button type="button" class="btn danger" data-act="end" data-id="' + esc(v.id) + '"' + (UI.reason ? '' : ' disabled') + '>End vigil' + (np ? ' and notify' : '') + '</button><button type="button" class="btn" data-act="end-cancel">Keep it open</button></div></div>';
     } else {
-      actions = '<div class="row"><button type="button" class="btn" data-act="repage" data-id="' + esc(v.id) + '"' + (s.open ? '' : ' disabled') + '>Re-page for ' + plural(s.open, 'open hour') + '</button>' +
-        '<button type="button" class="btn" data-act="extend" data-id="' + esc(v.id) + '">Add 12 hours</button>' +
-        '<button type="button" class="btn danger" data-act="end-ask" data-id="' + esc(v.id) + '">End vigil</button></div>';
+      actions = '<div class="stack"><button type="button" class="btn outline block" data-act="repage" data-id="' + esc(v.id) + '"' + (s.open ? '' : ' disabled') + '>Re-page for ' + plural(s.open, 'open hour') + '</button>' +
+        '<div class="btns2"><button type="button" class="btn" data-act="extend" data-id="' + esc(v.id) + '">Add 12 hours</button>' +
+        '<button type="button" class="btn danger" data-act="end-ask" data-id="' + esc(v.id) + '">End vigil</button></div></div>';
     }
   }
-  return '<button type="button" class="btn quiet back" data-act="home">‹ Vigils</button>' +
-    '<div class="head"><p class="eyebrow">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p><h2>Coverage</h2></div>' +
+  return '<div class="back-row"><button type="button" class="pillbtn back" data-act="home">' + svg('back') + 'Back</button></div>' +
+    '<p class="crumb">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p><h2 class="h1">Coverage</h2>' +
     '<div class="stack"><div>' + status + '</div>' +
-    '<div class="stats"><div><b>' + s.filled + '/' + s.total + '</b><span>hours filled</span></div><div><b>' + (s.gap ? t24(s.gap.start) : 'None') + '</b><span>next gap</span></div><div><b>' + v.paged + '</b><span>paged</span></div></div>' +
-    strip(v, s, now) +
-    '<div class="legend"><span><i class="f"></i>Filled</span><span><i class="o"></i>Open</span><span><i class="m"></i>Not covered</span></div>' +
+    '<div class="stats"><div><b>' + s.filled + '/' + s.total + '</b><span>hours filled</span></div><div><b>' + (s.gap ? (s.gap.start <= now ? 'Now' : t24(s.gap.start)) : 'None') + '</b><span>next gap</span></div><div><b>' + v.paged + '</b><span>paged</span></div></div>' +
+    '<div class="card">' + ribbon(v, s, now) + '</div>' +
     actions + '</div>' +
     '<h3 class="sec">Hours</h3><ul class="slots">' + rows + '</ul>' +
     '<p class="hint">Volunteers arrive 5–10 minutes early and check in ' + esc(where(v)) + '.</p>';
 }
 
 /* ---------- volunteer ---------- */
+// Version 2.6: three tabs (Vigils, My shifts, My hours) and the sign-up screen.
 function viewVol() {
   if (VIEW.name === 'vigil' && vigilById(VIEW.id)) return volVigil(vigilById(VIEW.id));
-  if (VIEW.name === 'myhours') return volHours();
+  if (TAB === 'shifts') return volShifts();
+  if (TAB === 'hours') return volHours();
   return volHome();
 }
 function myShifts(now) {
@@ -939,34 +1161,67 @@ function volHome() {
   // Alert emails are off but this phone isn't the one getting notifications: say so, with a way back.
   var peNote = !appOnly() && !ST.me.pageEmail && !on
     ? '<div class="note row"><span>Alert emails are off, so pages and reminders go only to the phone where you turned notifications on.</span><button type="button" class="btn small" data-act="pe-on">Email me alerts too</button></div>' : '';
+  var first = firstName(ST.me.name);
+  // Notifications that need attention go at the top; once they're on, their card waits under This phone.
+  var ps = pushState(), notif = ps === 'on' ? '' : notifCard(), notifLater = ps === 'on' ? notifCard() : '';
   return installBanner() + getAppCard() +
-    '<div class="head"><h2>NODA vigils</h2></div>' +
-    '<label class="toggle" for="f-avail"><span><b>Available for NODA pages</b><small>' +
+    '<h2 class="greet">' + greeting() + (first ? ', ' + esc(first) : '') + '.</h2>' +
+    '<label class="card toggle" for="f-avail"><span class="tx"><b>Available for NODA pages</b><small>' +
       (ST.me.onCall ? by : 'Paused. You won’t get alerts.') +
     '</small></span><input type="checkbox" id="f-avail" role="switch"' + (ST.me.onCall ? ' checked' : '') + '></label>' +
-    peNote + notifCard() +
-    '<h3 class="sec">Your shifts</h3>' +
-    (mine.length ? '<div class="stack">' + mine.map(function (x) { return shiftCard(x.v, x.s, now); }).join('') + '</div>' : '<p class="empty">No upcoming shifts. Sign up below when you can.</p>') +
-    '<h3 class="sec">Needs company</h3>' +
-    (needs.length ? '<div class="stack">' + needs.map(function (v) { return vigilCard(v, 'vol', now); }).join('') + '</div>' : '<p class="empty">Every hour is covered right now. Thank you.</p>') +
-    serviceCard() +
-    (MODE === 'pwa' ? deviceCard() : '<p class="hint">Add this page to your home screen so it’s one tap away.</p>');
+    peNote + (notif ? '<div class="card-gap">' + notif + '</div>' : '') +
+    (needs.length ? needs.map(function (v) { return needCard(v, now); }).join('')
+      : '<div class="card calm"><h3 class="ct">Every hour is covered right now.</h3><p class="sub">Thank you. When a patient needs company, it shows here.</p></div>') +
+    (mine.length ? nextShift(mine[0], mine.length, now) : '') +
+    (MODE === 'pwa' ? deviceCard(notifLater) : '<p class="hint">Add this page to your home screen so it’s one tap away.</p>');
+}
+// The suggested sign-up on the home screen: the first open time, for 2 hours when 2 fit.
+function bestOption(opts) {
+  if (!opts.length) return null;
+  var o = opts[0], L = o.lens, h = L.indexOf(2) >= 0 ? 2 : L[L.length - 1] < 2 ? L[L.length - 1] : L[0];
+  return { t: o.t, h: h };
+}
+function sitLabel(t, h, now) { var end = t + h * H; return t <= now ? 'Sit now, until ' + t12(end) : 'Sit ' + r12(t, end) + ' ' + dayWord(t); }
+function needCard(v, now) {
+  var s = stats(v, now), best = bestOption(signupOptions(v, now));
+  var next = !s.gap ? '' : s.gap.start <= now ? ' Someone is needed now.' : ' The next open time is ' + dayWord(s.gap.start) + ' at ' + t12(s.gap.start) + '.';
+  return '<section class="card need">' +
+    '<h3 class="ct">A patient on ' + esc(v.unitName) + ' needs company.</h3>' +
+    '<p class="sub">' + (s.open === 1 ? '1 hour is still open.' : s.open + ' hours are still open.') + next + '</p>' +
+    ribbon(v, s, now) +
+    (best ? '<button type="button" class="btn primary big block" data-act="pick" data-id="' + esc(v.id) + '" data-t="' + best.t + '" data-h="' + best.h + '">' + esc(sitLabel(best.t, best.h, now)) + '</button>' +
+      '<button type="button" class="btn outline block" data-act="open" data-id="' + esc(v.id) + '">Other times</button>'
+      : '<button type="button" class="btn outline block" data-act="open" data-id="' + esc(v.id) + '">See the hours</button>') +
+  '</section>';
+}
+// One shift: when, where, and Check in / Check out / I can't make it.
+function shiftBody(v, s, now) {
+  var early = rules().early * MIN, inNow = s.inAt && !s.outAt, canIn = !s.inAt && now >= s.start - early && now < s.end, acts;
+  if (UI.confirmRelease === s.id) {
+    acts = '<div class="confirm"><p>Can’t make it? NODA lets the other volunteers know, so someone can sign up.</p><button type="button" class="btn danger block" data-act="release" data-id="' + esc(s.id) + '">Give up this shift</button><button type="button" class="btn block" data-act="keep">Keep my shift</button></div>';
+  } else {
+    acts = (inNow ? '<button type="button" class="btn primary big block" data-act="checkout" data-id="' + esc(s.id) + '">Check out</button>'
+        : canIn ? '<button type="button" class="btn primary big block" data-act="checkin" data-id="' + esc(s.id) + '">Check in</button>' : '') +
+      (inNow ? '' : '<button type="button" class="btn outline block" data-act="release-ask" data-id="' + esc(s.id) + '">I can’t make it</button>');
+  }
+  var info = inNow ? esc(v.unitName) + '. You’re checked in. Check out when you leave.'
+    : esc(v.unitName) + '. Check in ' + esc(where(v)) + (canIn ? ' now.' : ' from ' + t12(s.start - early) + '.');
+  return '<p class="big">' + esc(dayLabel(s.start) + ', ' + r12(s.start, s.end)) + '</p>' +
+    (inNow ? '<p><span class="chip bedside">At bedside</span></p>' : '') + '<p>' + info + '</p>' + acts;
+}
+function nextShift(x, count, now) {
+  return '<section class="card shift"><p class="lab2">Your next shift</p>' + shiftBody(x.v, x.s, now) +
+    (count > 1 ? '<button type="button" class="btn quiet block" data-act="tab" data-tab="shifts">See all ' + count + ' of your shifts</button>' : '') + '</section>';
+}
+function volShifts() {
+  var now = Date.now(), mine = myShifts(now);
+  return '<div class="head"><h2>My shifts</h2></div>' +
+    (mine.length ? mine.map(function (x) { return '<section class="card shift">' + shiftBody(x.v, x.s, now) + '</section>'; }).join('')
+      : '<p class="empty">No upcoming shifts. When a patient needs company, you can sign up on Vigils.</p>') +
+    '<p class="hint">Check in when you arrive and check out when you leave, so your hours count.</p>';
 }
 // The volunteer's hours, and a way to ask the coordinator for a service letter.
 function letterAsked() { return !!(ST.me.letterAsked && (!ST.me.letterSent || ST.me.letterSent < ST.me.letterAsked)); }
-function serviceCard() {
-  var h = ST.me.hours || { total: 0 };
-  var has = h.total > 0;
-  var body = has
-    ? '<p class="big">' + esc(hrsTxt(h.total)) + '</p><p class="sub">' + esc([h.shifts ? plural(h.shifts, 'vigil shift') : '', h.first ? 'since ' + longDate(h.first) : ''].filter(Boolean).join(' · ')) + '</p>'
-    : '<p class="sub">Your hours show here after your first vigil shift or the NODA training day.</p>';
-  var acts = '<button type="button" class="btn small" data-act="myhours">See your hours</button>' +
-    (has && !letterAsked() ? '<button type="button" class="btn small" data-act="ask-letter">Ask for a service letter</button>' : '');
-  var note = letterAsked()
-    ? '<p class="hint m0">You asked for a service letter on ' + esc(medDate(ST.me.letterAsked)) + '. Your coordinator will email it to you.</p>'
-    : has ? '<p class="hint m0">A letter confirming your NODA hours, for school or job applications.</p>' : '';
-  return '<h3 class="sec">Your NODA service</h3><div class="card service">' + body + '<div class="acts">' + acts + '</div>' + note + '</div>';
-}
 // Hours rows, newest first. fixable (coordinator): tapping an entry opens a form to fix it, which adds a
 // Correction row; the original entry stays on the record.
 function histList(list, fixable) {
@@ -1002,30 +1257,18 @@ function hoursStats(h) {
   return '<div class="stats"><div><b>' + esc(hrsNum(h.total)) + '</b><span>total hours</span></div><div><b>' + h.shifts + '</b><span>vigil shifts</span></div><div><b>' + esc(hrsNum(h.training)) + '</b><span>training hours</span></div></div>';
 }
 function volHours() {
-  var h = ST.me.hours || { total: 0, vigil: 0, training: 0, other: 0, shifts: 0 };
-  return '<button type="button" class="btn quiet back" data-act="home">‹ Vigils</button>' +
-    '<div class="head"><p class="eyebrow">Your NODA service</p><h2>Your hours</h2></div>' +
-    '<div class="stack">' + hoursStats(h) +
-    (h.first ? '<p class="hint m0">Since ' + esc(longDate(h.first)) + (h.vigil ? '. ' + esc(hrsTxt(h.vigil)) + ' at the bedside.' : '.') + '</p>' : '') +
-    '</div>' +
+  var h = ST.me.hours || { total: 0, vigil: 0, training: 0, other: 0, shifts: 0 }, has = h.total > 0;
+  var letter = letterAsked()
+    ? '<p class="hint m0">You asked for a service letter on ' + esc(medDate(ST.me.letterAsked)) + '. Your coordinator will email it to you.</p>'
+    : has ? '<button type="button" class="btn outline block" data-act="ask-letter">Ask for a service letter</button><p class="hint m0">A letter confirming your NODA hours, for school or job applications.</p>' : '';
+  return '<div class="head"><h2>My hours</h2></div>' +
+    '<section class="card service">' +
+      (has ? '<p class="big">' + esc(hrsTxt(h.total)) + '</p><p class="sub">' + esc([h.shifts ? plural(h.shifts, 'vigil shift') : '', h.first ? 'since ' + longDate(h.first) : ''].filter(Boolean).join(' · ')) + '</p>' +
+          '<p class="sub">' + esc([h.vigil ? hrsTxt(h.vigil) + ' at the bedside' : '', h.training ? hrsTxt(h.training) + ' of training' : '', h.other ? hrsTxt(h.other) + ' other' : ''].filter(Boolean).join(' · ')) + '</p>'
+        : '<p class="sub">Your hours show here after your first vigil shift or the NODA training day.</p>') +
+      letter + '</section>' +
     '<h3 class="sec">History</h3>' + histList(ST.me.history || []) +
-    '<p class="hint">Shifts are added when you check out. If something looks wrong, tell your coordinator.</p>' +
-    (h.total > 0 && !letterAsked() ? '<div class="more"><button type="button" class="btn" data-act="ask-letter">Ask for a service letter</button></div>' : '') +
-    (letterAsked() ? '<p class="hint">You asked for a service letter on ' + esc(medDate(ST.me.letterAsked)) + '. Your coordinator will email it to you.</p>' : '');
-}
-function shiftCard(v, s, now) {
-  var early = rules().early * MIN, inNow = s.inAt && !s.outAt, canIn = !s.inAt && now >= s.start - early && now < s.end, body;
-  if (UI.confirmRelease === s.id) {
-    body = '<div class="confirm"><p>Release these hours? Other volunteers will be alerted so someone can sign up.</p><div class="row"><button type="button" class="btn danger" data-act="release" data-id="' + esc(s.id) + '">Release hours</button><button type="button" class="btn" data-act="keep">Keep them</button></div></div>';
-  } else {
-    body = '<div class="row">' +
-      (inNow ? '<button type="button" class="btn primary" data-act="checkout" data-id="' + esc(s.id) + '">Check out</button>'
-        : canIn ? '<button type="button" class="btn primary" data-act="checkin" data-id="' + esc(s.id) + '">Check in</button>'
-        : '<span class="hint m0">Check-in opens at ' + t12(s.start - early) + '.</span>') +
-      (inNow ? '' : '<button type="button" class="btn quiet" data-act="release-ask" data-id="' + esc(s.id) + '">Can’t make it</button>') + '</div>';
-  }
-  return '<div class="card shift"><div class="row"><span class="t12">' + esc(dayLabel(s.start)) + ' · ' + r12(s.start, s.end) + '</span>' + (inNow ? '<span class="chip bedside">At bedside</span>' : '') + '</div>' +
-    '<p class="sub">' + esc(v.unitName) + ' · ' + hrs(Math.round((s.end - s.start) / H)) + ' · check in ' + esc(where(v)) + '</p>' + body + '</div>';
+    '<p class="hint">Shifts are added when you check out. If something looks wrong, tell your coordinator.</p>';
 }
 // Where a sign-up can start, and for how long: every hour of an open stretch that leaves room for the shortest
 // sign-up, for the shortest to the longest sign-up. A stretch shorter than the shortest sign-up is taken whole.
@@ -1045,71 +1288,101 @@ function signupOptions(v, now) {
   });
   return opts;
 }
-function signupCard(v, now) {
-  var r = rules(), opts = signupOptions(v, now);
-  if (!opts.length) return '<p class="empty">Every hour is covered right now. You’ll get an alert if hours open up.</p>';
-  var cur = null;
+// Two questions (when can you come, how long can you stay), then a box to check and confirm.
+function signupQuestions(v, opts, now) {
+  var r = rules(), cur = null;
   opts.forEach(function (o) { if (o.t === UI.pickStart) cur = o; });
   if (!cur) cur = opts[0];
   UI.pickStart = cur.t;
-  var h = cur.lens.indexOf(UI.pickHours) >= 0 ? UI.pickHours : cur.lens[0];
+  var h = cur.lens.indexOf(UI.pickHours) >= 0 ? UI.pickHours : cur.lens.indexOf(2) >= 0 ? 2 : cur.lens[0];
   UI.pickHours = h;
+  var groups = [];
+  opts.forEach(function (o) { var g = groups[groups.length - 1]; if (!g || g.run !== o.run) groups.push(g = { run: o.run, opts: [] }); g.opts.push(o); });
+  var q1 = groups.map(function (g) {
+    var on = g.run === cur.run;
+    var range = g.run.start <= now ? 'Until ' + t12(g.run.end) : r12(g.run.start, g.run.end);
+    var starts = on && g.opts.length > 1 ? '<div class="starts" role="group" aria-label="Start time">' + g.opts.map(function (o) {
+      return '<button type="button" class="pill" data-act="pick-start" data-t="' + o.t + '" aria-pressed="' + (o.t === cur.t) + '">' + esc(o.t <= now ? 'Now' : t12(o.t)) + '</button>';
+    }).join('') + '</div>' : '';
+    return '<div class="part' + (on ? ' on' : '') + '"><button type="button" class="part-btn" data-act="pick-start" data-t="' + g.opts[0].t + '" aria-pressed="' + on + '">' +
+      '<b>' + esc(partLabel(g.run.start, now)) + '</b><span>' + esc(range + ' · ' + plural(g.run.hours, 'hour') + ' open') + '</span></button>' + starts + '</div>';
+  }).join('');
+  var q2 = cur.lens.map(function (k) {
+    return '<button type="button" class="len" data-act="pick-hours" data-h="' + k + '" aria-pressed="' + (k === h) + '"><b>' + plural(k, 'hour') + '</b><span>until ' + t12(cur.t + k * H) + '</span></button>';
+  }).join('');
   var end = cur.t + h * H, before = Math.round((cur.t - cur.run.start) / H), after = Math.round((cur.run.end - end) / H), left = [];
   if (before > 0 && before < r.min) left.push(plural(before, 'open hour') + ' before you');
   if (after > 0 && after < r.min) left.push(plural(after, 'open hour') + ' after you');
-  var startOpts = opts.map(function (o) {
-    var most = o.lens[o.lens.length - 1];
-    return '<option value="' + o.t + '"' + (o.t === cur.t ? ' selected' : '') + '>' + esc(dayLabel(o.t) + ' ' + t12(o.t) + (o.t <= now ? ' (now)' : '') + ' · ' + (o.lens.length > 1 ? 'up to ' : '') + most + ' h') + '</option>';
-  }).join('');
-  var hourOpts = cur.lens.map(function (k) { return '<option value="' + k + '"' + (k === h ? ' selected' : '') + '>' + hrs(k) + '</option>'; }).join('');
-  return '<div class="card signup"><p class="h">Sign up</p>' +
-    '<label class="field" for="f-start"><span>Start</span><select id="f-start">' + startOpts + '</select></label>' +
-    '<label class="field" for="f-hours"><span>How long</span><select id="f-hours">' + hourOpts + '</select></label>' +
-    '<p class="hint m0">You’d sit ' + esc(dayWord(cur.t)) + ' ' + r12(cur.t, end) + ', ' + hrs(h) + '.' +
-      (left.length ? ' That leaves ' + left.join(' and ') + '.' : '') + '</p>' +
-    '<button type="button" class="btn primary block" data-act="take" data-id="' + esc(v.id) + '">Sign up for ' + hrs(h) + '</button>' +
-    (cur.lens.length === 1 && cur.lens[0] < r.min
-      ? '<p class="hint m0">Only ' + hrs(cur.lens[0]) + ' ' + (cur.lens[0] === 1 ? 'is' : 'are') + ' open here, so you can take ' + (cur.lens[0] === 1 ? 'it' : 'them') + ' on ' + (cur.lens[0] === 1 ? 'its' : 'their') + ' own.</p>' : '') + '</div>';
+  var opens = cur.t - r.early * MIN;
+  var when = cur.t <= now ? 'now until ' + t12(end) : dayWord(cur.t) + ' from ' + fromTo(cur.t, end);
+  var label = cur.t <= now ? 'now until ' + t12(end) : dayWord(cur.t) + ' ' + r12(cur.t, end);
+  return '<h3 class="q"><span aria-hidden="true">1</span>When can you come?</h3>' + q1 +
+    '<h3 class="q"><span aria-hidden="true">2</span>How long can you stay?</h3><div class="lens" role="group" aria-label="How long">' + q2 + '</div>' +
+    '<section class="conf" id="confirm" tabindex="-1" aria-labelledby="conf-h"><p class="lab2">Check and confirm</p>' +
+      '<h3 class="ct" id="conf-h">You’ll sit ' + esc(when) + '.</h3>' +
+      '<ul class="facts2">' +
+        '<li>' + svg('pin') + '<span>Check in ' + esc(where(v)) + '.</span></li>' +
+        '<li>' + svg('shield') + '<span>' + (v.ppe ? 'PPE is needed. The nurse shows you what to wear.' : 'No PPE is needed.') + '</span></li>' +
+        '<li>' + svg('clock') + '<span>' + (opens <= now ? 'You can check in as soon as you arrive.' : 'Arrive 5–10 minutes early. Check-in opens at ' + t12(opens) + '.') + '</span></li>' +
+      '</ul>' +
+      (left.length ? '<p class="hint">That leaves ' + left.join(' and ') + '.</p>' : '') +
+      (cur.lens.length === 1 && cur.lens[0] < r.min ? '<p class="hint">Only ' + hrs(cur.lens[0]) + ' ' + (cur.lens[0] === 1 ? 'is' : 'are') + ' open here, so you can take ' + (cur.lens[0] === 1 ? 'it' : 'them') + ' on ' + (cur.lens[0] === 1 ? 'its' : 'their') + ' own.</p>' : '') +
+      '<button type="button" class="btn primary big block" data-act="take" data-id="' + esc(v.id) + '">Sign up for ' + esc(label) + '</button>' +
+      '<p class="fine">If plans change, tap “I can’t make it” on your home screen.</p>' +
+    '</section>';
 }
-function volVigil(v) {
-  var now = Date.now(), rows = '', last = '';
-  if (v.status !== 'active') {
-    return '<button type="button" class="btn quiet back" data-act="home">‹ Vigils</button><div class="head"><p class="eyebrow">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p><h2>This vigil has ended</h2></div><p class="empty">Thank you for being part of it. Your coordinator will be in touch.</p>';
-  }
+// Who's with the patient, who's coming, and what's open, from now on.
+function watchList(v, now) {
+  var rows = '', last = 'Today';
   segments(v, now).forEach(function (g) {
     if (g.st === 'done' || g.st === 'missed' || g.st === 'cancelled') return;
     var dl = dayLabel(g.start);
-    if (dl !== last) { rows += '<li class="dayhead">' + esc(dl) + '</li>'; last = dl; }
-    var chip;
-    if (g.s && g.s.vol === ST.me.id) chip = '<span class="chip you">You · ' + g.hours + ' h</span>';
-    else if (g.s) chip = '<span class="chip taken">' + esc(g.s.volName) + '</span>';
-    else chip = g.st === 'opennow' ? '<span class="chip now">Open now · ' + g.hours + ' h</span>' : '<span class="chip open">Open · ' + g.hours + ' h</span>';
-    rows += '<li class="slot vol"><span class="t12">' + r12(g.start, g.end) + '</span>' + chip + '</li>';
+    if (dl !== last) { rows += '<li class="day">' + esc(dl) + '</li>'; last = dl; }
+    var range = r12(g.start, g.end), cls, av, txt;
+    if (g.s && g.s.vol === ST.me.id) { cls = 'you'; av = '<span class="av y">' + esc(initials(ST.me.name)) + '</span>'; txt = 'You'; }
+    else if (g.s) { cls = 'cv'; av = '<span class="av' + (g.st === 'bedside' ? ' now' : '') + '">' + esc(initials(g.s.volName)) + '</span>'; txt = esc(g.s.volName) + (g.st === 'bedside' ? ', with the patient now' : ''); }
+    else { cls = 'op'; av = '<span class="av o" aria-hidden="true"></span>'; txt = (g.st === 'opennow' ? 'Open now' : 'Open') + ' · ' + plural(g.hours, 'hour'); }
+    rows += '<li class="blk ' + cls + '">' + av + '<span class="tx"><b>' + esc(range) + '</b><span>' + txt + '</span></span></li>';
   });
+  return '<h3 class="h3">Who’s keeping watch</h3><ul class="tl">' + (rows || '<li class="day">No upcoming hours</li>') + '</ul>';
+}
+function volVigil(v) {
+  var now = Date.now();
+  var back = '<div class="back-row"><button type="button" class="pillbtn back" data-act="home">' + svg('back') + 'Back</button></div>';
+  if (v.status !== 'active') {
+    return back + '<p class="crumb">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p><h2 class="h1">This vigil has ended</h2><p class="empty">Thank you for being part of it. Your coordinator will be in touch.</p>';
+  }
   var just = null;
   if (UI.justTook) signupsOf(v).forEach(function (x) { if (x.id === UI.justTook && x.vol === ST.me.id) just = x; });
-  var onit = just ? '<div class="card onit"><p class="eyebrow">You’re on</p><p class="big">' + esc(dayLabel(just.start)) + ' · ' + r12(just.start, just.end) + '</p><ol>' +
+  var onit = just ? '<section class="card onit" id="onit" tabindex="-1"><p class="lab2">You’re on</p><p class="big">' + esc(dayLabel(just.start) + ', ' + r12(just.start, just.end)) + '</p><ol>' +
       '<li>Arrive 5–10 minutes early. Check-in opens at ' + t12(just.start - rules().early * MIN) + '.</li>' +
       '<li>Wear your NODA volunteer badge.</li>' +
-      '<li>Check in ' + esc(where(v)) + '. The charge nurse walks you to the room.</li></ol></div>' : '';
-  return '<button type="button" class="btn quiet back" data-act="home">‹ Vigils</button>' +
-    '<div class="head"><p class="eyebrow">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p><h2>A patient needs company</h2></div>' +
-    '<div class="stack">' + onit +
-    '<ul class="facts"><li><b>Check in</b><span>' + esc(where(v).replace(/^(at|with) the /, '').replace(/^./, function (c) { return c.toUpperCase(); })) + '</span></li>' +
-    '<li><b>PPE</b><span>' + (v.ppe ? 'Needed. The nurse shows you what to wear.' : 'None needed') + '</span></li>' +
-    '<li><b>Arrive</b><span>5–10 minutes early, to learn the patient’s preferences</span></li></ul>' +
-    signupCard(v, now) + '</div>' +
-    '<p class="hint">When you arrive, the charge nurse shares the patient’s name, room and anything you should know. If the vigil ends, you’ll get an alert.</p>' +
-    '<h3 class="sec">Coverage</h3><ul class="slots">' + (rows || '<li class="dayhead">No upcoming hours</li>') + '</ul>';
+      '<li>Check in ' + esc(where(v)) + '. The charge nurse walks you to the room.</li></ol></section>' : '';
+  var opts = signupOptions(v, now);
+  return back + '<p class="crumb">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p>' +
+    '<h2 class="h1">Sit with a patient</h2>' + (opts.length ? '<p class="sub">Two questions, then you confirm.</p>' : '') + onit +
+    (opts.length ? signupQuestions(v, opts, now) : '<p class="empty">Every hour is covered right now. You’ll get an alert if hours open up.</p>') +
+    watchList(v, now) +
+    '<p class="hint">When you arrive, the charge nurse shares the patient’s name, room and anything you should know. If the vigil ends, you’ll get an alert.</p>';
 }
 
 /* ---------- coordinator ---------- */
+// Version 2.6: tabs across the bottom, a word under every icon. Volunteers: Vigils, My shifts, My hours.
+// Coordinator: Today, Volunteers, Report, Setup (charge nurses, links and status).
+function tabList() {
+  if (ST.role === 'vol') return [['vigils', 'Vigils', 'heart'], ['shifts', 'My shifts', 'cal'], ['hours', 'My hours', 'clock']];
+  return [['vigils', 'Today', 'home'], ['volunteers', 'Volunteers', 'people'], ['report', 'Report', 'chart'], ['links', 'Setup', 'sliders']];
+}
 function tabsHTML() {
-  var list = [['vigils', 'Vigils'], ['volunteers', 'Volunteers']];
-  if (ST.chargeNurses) list.push(['rns', 'Charge RNs']);
-  return list.concat([['report', 'Report'], ['links', 'Links']]).map(function (t) {
-    return '<button type="button" role="tab" data-act="tab" data-tab="' + t[0] + '" aria-selected="' + (TAB === t[0]) + '">' + t[1] + '</button>';
+  var list = tabList();
+  tabs.className = 'tabs n' + list.length;
+  return list.map(function (t) {
+    return '<button type="button" class="tab" data-act="tab" data-tab="' + t[0] + '"' + (TAB === t[0] ? ' aria-current="page"' : '') + '>' + svg(t[2], 'tico') + '<span>' + t[1] + '</span></button>';
   }).join('');
+}
+function backBtn(act, id) { return '<div class="back-row"><button type="button" class="pillbtn back" data-act="' + act + '"' + (id ? ' data-id="' + esc(id) + '"' : '') + '>' + svg('back') + 'Back</button></div>'; }
+function viewSetup() {
+  return '<div class="head"><h2>Setup</h2></div>' + (ST.chargeNurses ? viewRns() : '') + viewLinks();
 }
 function volById(id) { for (var i = 0; i < ST.volunteers.length; i++) if (ST.volunteers[i].id === id) return ST.volunteers[i]; return null; }
 function viewVols() {
@@ -1174,8 +1447,8 @@ function volDetail(v) {
     ? '<div class="row"><span>Their phone confirms each alert it gets.</span><button type="button" class="btn small" data-act="pe-on-vol" data-id="' + esc(v.id) + '">Turn alert emails back on</button></div>'
     : '';
   var facts = [h.vigil ? hrsTxt(h.vigil) + ' at the bedside' : '', h.other ? hrsTxt(h.other) + ' other' : '', h.first ? 'since ' + longDate(h.first) : 'no hours yet', h.last ? 'last active ' + medDate(h.last) : ''].filter(Boolean).join(' · ');
-  return '<button type="button" class="btn quiet back" data-act="home">‹ Volunteers</button>' +
-    '<div class="head"><p class="eyebrow">Volunteer · ' + esc(v.id) + '</p><h2>' + esc(v.name) + '</h2></div>' +
+  return backBtn('home') +
+    '<div class="head"><p class="crumb">Volunteer · ' + esc(v.id) + '</p><h2>' + esc(v.name) + '</h2></div>' +
     '<div class="stack">' + hoursStats(h) +
     '<p class="hint m0">' + esc(facts.charAt(0).toUpperCase() + facts.slice(1)) + '</p>' +
     (letterOpen(v) ? '<p class="note">' + esc(first) + ' asked for a service letter on ' + esc(medDate(v.letterAsked)) + '.</p>' : '') +
@@ -1239,8 +1512,8 @@ function bulkView() {
       var on = UI.hDraft && UI.hDraft.volIds && UI.hDraft.volIds.indexOf(v.id) >= 0;
       return '<label class="opt" for="f-bulk-' + i + '"><input type="checkbox" id="f-bulk-' + i + '" name="bulkvol" value="' + esc(v.id) + '"' + (on ? ' checked' : '') + '><span>' + esc(v.name) + '</span></label>';
     }).join('') + '</fieldset>';
-  return '<button type="button" class="btn quiet back" data-act="home">‹ Volunteers</button>' +
-    '<div class="head"><p class="eyebrow">Hours</p><h2>Add hours for several volunteers</h2></div>' +
+  return backBtn('home') +
+    '<div class="head"><p class="crumb">Hours</p><h2>Add hours for several volunteers</h2></div>' +
     hoursForm('bulkhours', 'The same hours for everyone you check', picks) +
     '<p class="hint">Each person gets their own entry. To fix one later, open that volunteer and tap it.</p>';
 }
@@ -1251,8 +1524,8 @@ function letterView(v) {
   var c = L.data && L.data.letter;
   var preview = c ? letterHTML(c) : L.err ? '<p class="err">' + esc(L.err) + '</p>' : '<p class="empty">Loading…</p>';
   var ok = !!(c && c.ready);
-  return '<div class="noprint"><button type="button" class="btn quiet back" data-act="vol-open" data-id="' + esc(v.id) + '">‹ ' + esc(v.name) + '</button>' +
-    '<div class="head"><p class="eyebrow">Service letter</p><h2>Letter for ' + esc(v.name) + '</h2></div>' +
+  return '<div class="noprint">' + backBtn('vol-open', v.id) +
+    '<div class="head"><p class="crumb">Service letter</p><h2>Letter for ' + esc(v.name) + '</h2></div>' +
     '<form id="letterform" class="card form" novalidate>' +
       '<div class="two"><label class="field" for="l-from"><span>Hours from</span><input type="date" id="l-from" max="' + todayISO() + '" value="' + esc(o.from || '') + '"></label>' +
       '<label class="field" for="l-to"><span>Through</span><input type="date" id="l-to" max="' + todayISO() + '" value="' + esc(o.to || '') + '"></label></div>' +
@@ -1312,11 +1585,11 @@ function viewRns() {
       '<button type="button" class="btn small' + (n.on ? ' quiet' : '') + '" data-act="rn-onoff" data-id="' + esc(n.email) + '" data-on="' + (n.on ? '0' : '1') + '">' + (n.on ? 'Turn off' : 'Turn on') + '</button>' +
       '</span></div></li>';
   }).join('') + '</ul>' : '<p class="empty">No charge nurses yet. Add the charge nurses on your pilot units above.</p>';
-  return '<div class="head"><p class="eyebrow">' + plural(on, 'charge nurse') + ' can sign in</p><h2>Charge nurses</h2></div>' + setupNote +
+  return '<h3 class="h3 first">Charge nurses</h3><p class="eyebrow">' + plural(on, 'charge nurse') + ' can sign in</p>' + setupNote +
     '<div class="stack">' + add + rows + '</div>' +
     '<p class="hint">Each charge nurse signs in with their own work email, so the Log shows who paged. Turning someone off signs them out everywhere.</p>' +
     (si.shared
-      ? '<p class="note">The shared charge RN link (Links tab) still works too. Once your charge nurses are on this list, set Shared charge RN link to Off on the Settings tab.</p>'
+      ? '<p class="note">The shared charge RN link (below) still works too. Once your charge nurses are on this list, set Shared charge RN link to Off on the Settings tab.</p>'
       : '<p class="hint">Only the charge nurses on this list can page volunteers.</p>');
 }
 function viewReport() {
@@ -1359,7 +1632,7 @@ function viewLinks() {
   var si = ST.signIn || { email: false, links: true, shared: true };
   var codes = ST.codes || { today: 0, cap: 0 };
   var rn = !si.shared
-    ? '<p class="note">The shared charge RN link is off (Settings tab). Charge nurses sign in with their own email; see the Charge RNs tab.</p>'
+    ? '<p class="note">The shared charge RN link is off (Settings tab). Charge nurses sign in with their own email; see Charge nurses above.</p>'
     : ST.rnLink
     ? '<div class="linkbox"><input type="text" id="rn-link" readonly value="' + esc(ST.rnLink) + '"><div class="row"><button type="button" class="btn small" data-act="copy" data-src="rn-link">Copy link</button>' +
       (UI.confirmRn ? '' : '<button type="button" class="btn small quiet" data-act="rn-ask">Make a new charge RN link</button>') + '</div></div>' +
@@ -1371,10 +1644,10 @@ function viewLinks() {
   var appOnlyN = ST.volunteers.filter(function (v) { return !v.pageEmail; }).length;
   var rc = ST.receipts || { sent: 0, confirmed: 0, missed: 0 };
   var checked = rc.confirmed + rc.missed;
-  return '<div class="head"><p class="eyebrow">Setup</p><h2>Links and status</h2></div>' +
+  return '<h3 class="h3' + (ST.chargeNurses ? '' : ' first') + '">Links and status</h3>' +
     '<h3 class="sec first">Charge RN link</h3>' + rn +
     (si.shared ? '<p class="hint">Anyone with this link can page volunteers.' +
-      (ST.chargeNurses ? ' To know who paged, use the Charge RNs tab instead.' : '') + '</p>' : '') +
+      (ST.chargeNurses ? ' To know who paged, add charge nurses above instead.' : '') + '</p>' : '') +
     (where ? '<p class="hint">' + where + '</p>' : '') +
     '<h3 class="sec">Status</h3><div class="status">' +
       '<div class="row"><span>Emails left today</span><b>' + ST.emailLeft + '</b></div>' +
@@ -1400,29 +1673,49 @@ function viewLinks() {
 function roleTheme(role) {
   var r = ROLE_THEME[role] ? role : '', html = document.documentElement;
   if ((html.getAttribute('data-role') || '') !== r) { if (r) html.setAttribute('data-role', r); else html.removeAttribute('data-role'); }
-  var meta = document.querySelector('meta[name="theme-color"][media="(prefers-color-scheme: light)"]');
-  if (meta && meta.getAttribute('content') !== ROLE_THEME[r || 'vol']) meta.setAttribute('content', ROLE_THEME[r || 'vol']);
+  barColors(r);
+}
+function setTabs(show) {
+  if (show) { tabs.innerHTML = tabsHTML(); tabs.hidden = false; } else { tabs.hidden = true; tabs.innerHTML = ''; }
+  document.body.classList.toggle('has-tabs', !!show);
 }
 function render() {
-  var rs = roleSwitchHTML();
+  var look = VIEW.name === 'textsize';
+  var rs = look ? '' : roleSwitchHTML();
   rolesEl.innerHTML = rs; rolesEl.hidden = !rs;
   roleTheme(ST && KEY ? ST.role : '');
-  if (MODE === 'pwa' && !KEY) { whoEl.textContent = 'Sign in'; tabs.hidden = true; app.innerHTML = signInView(); return; }
+  if (aaBtn) aaBtn.setAttribute('aria-pressed', String(look));
+  if (look) { setTabs(false); app.innerHTML = lookView(); placeNowMarks(); return; }
+  whoEl.hidden = false;
+  if (MODE === 'pwa' && !KEY) { whoEl.textContent = 'Sign in'; setTabs(false); app.innerHTML = signInView(); return; }
   if (!ST) return;
-  if (ST.role === 'none') { whoEl.textContent = MODE === 'pwa' ? 'Sign in' : 'Link not active'; tabs.hidden = true; app.innerHTML = noneView(); return; }
-  whoEl.textContent = ST.role === 'rn' ? 'Charge RN' + (ST.name ? ' · ' + ST.name : '') : ST.role === 'coord' ? 'NODA coordinator' : 'Volunteer · ' + ST.me.name;
-  if (ST.role === 'coord') { tabs.hidden = false; tabs.innerHTML = tabsHTML(); } else tabs.hidden = true;
+  if (ST.role === 'none') { whoEl.textContent = MODE === 'pwa' ? 'Sign in' : 'Link not active'; setTabs(false); app.innerHTML = noneView(); return; }
+  // The role under the name; the role switch says it instead for people on more than one list.
+  whoEl.textContent = ST.role === 'rn' ? 'Charge nurse' : ST.role === 'coord' ? 'NODA coordinator' : 'Volunteer';
+  whoEl.hidden = !!rs;
+  // Tabs show on each tab's main screen; a screen you step into (signing up, a request, a volunteer) has Back instead.
+  if (ST.role === 'vol' && ['vigils', 'shifts', 'hours'].indexOf(TAB) < 0) TAB = 'vigils';
+  if (ST.role === 'coord' && ['vigils', 'volunteers', 'report', 'links'].indexOf(TAB) < 0) TAB = 'vigils';
+  setTabs((ST.role === 'vol' || ST.role === 'coord') && VIEW.name === 'home');
   var html;
   if (ST.role === 'vol') html = viewVol();
   else if (ST.role === 'rn' || TAB === 'vigils') html = viewRN();
   else if (TAB === 'volunteers') html = viewVols();
-  else if (TAB === 'rns' && ST.chargeNurses) html = viewRns();
   else if (TAB === 'report') html = viewReport();
-  else html = viewLinks();
+  else html = viewSetup();
   app.innerHTML = html;
   placeNowMarks();
 }
 function go(view) { VIEW = view; UI = {}; render(); window.scrollTo(0, 0); }
+// Re-render after a tap without the screen jumping: the tapped control stays where it was, and keeps focus.
+function keepPlace(el, fn) {
+  var act = el.getAttribute('data-act'), key = el.getAttribute('data-t') || el.getAttribute('data-h') || '';
+  var top = el.getBoundingClientRect().top;
+  fn();
+  var sel = '.' + el.className.split(' ')[0] + '[data-act="' + act + '"][data-' + (el.hasAttribute('data-t') ? 't' : 'h') + '="' + key + '"]';
+  var again = app.querySelector(sel);
+  if (again) { window.scrollBy(0, again.getBoundingClientRect().top - top); try { again.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
+}
 
 /* ---------- events ---------- */
 function copyText(text, input) {
@@ -1430,11 +1723,15 @@ function copyText(text, input) {
   try { navigator.clipboard.writeText(text).then(function () { toast('Link copied'); }, fallback); } catch (e) { fallback(); }
 }
 var ACT = {
-  tab: function (el) { TAB = el.getAttribute('data-tab'); VIEW = { name: 'home' }; UI = {}; render(); },
+  tab: function (el) { TAB = el.getAttribute('data-tab'); VIEW = { name: 'home' }; UI = {}; render(); window.scrollTo(0, 0); },
   home: function () { DRAFT = null; go({ name: 'home' }); },
   open: function (el) { go({ name: 'vigil', id: el.getAttribute('data-id') }); },
   'new': function () {
-    DRAFT = { crit1: [], crit2: [], consent: false, unitId: ST.units[0].id, checkIn: ST.lists.checkIn[0], ppe: false, startIn: 0, windowH: 24 };
+    // Where: what this phone paged with last time, when it still fits the Sheet's lists.
+    var last = rnLast() || {}, L = ST.lists;
+    var unitOk = ST.units.some(function (u) { return u.id === last.unitId; }), inOk = L.checkIn.indexOf(last.checkIn) >= 0;
+    DRAFT = { crit1: [], crit2: [], consent: false, unitId: unitOk ? last.unitId : ST.units[0].id, checkIn: inOk ? last.checkIn : L.checkIn[0],
+      ppe: unitOk ? !!last.ppe : false, startIn: 0, windowH: 24, remembered: unitOk };
     go({ name: 'request' });
   },
   repage: function (el) { act('repage', [el.getAttribute('data-id')]); },
@@ -1445,8 +1742,24 @@ var ACT = {
   take: function (el) {
     var vid = el.getAttribute('data-id');
     if (!UI.pickStart || !UI.pickHours) return;
-    act('signUp', [vid, UI.pickStart, UI.pickHours], function (st) { VIEW = { name: 'vigil', id: vid }; UI = { justTook: st.signedUp }; window.scrollTo(0, 0); });
+    act('signUp', [vid, UI.pickStart, UI.pickHours], function (st) {
+      VIEW = { name: 'vigil', id: vid }; UI = { justTook: st.signedUp }; window.scrollTo(0, 0);
+      setTimeout(function () { var c = document.getElementById('onit'); if (c) { try { c.focus({ preventScroll: true }); } catch (e) { /* no focus */ } } }, 0);
+    });
   },
+  // Version 2.6: the home screen's one big answer opens the sign-up with that time chosen, at the confirm box.
+  pick: function (el) {
+    go({ name: 'vigil', id: el.getAttribute('data-id') });
+    UI.pickStart = +el.getAttribute('data-t'); UI.pickHours = +el.getAttribute('data-h');
+    render();
+    var c = document.getElementById('confirm');
+    if (c) { c.scrollIntoView({ block: 'center' }); try { c.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
+  },
+  'pick-start': function (el) { UI.pickStart = +el.getAttribute('data-t'); keepPlace(el, function () { render(); }); },
+  'pick-hours': function (el) { UI.pickHours = +el.getAttribute('data-h'); keepPlace(el, function () { render(); }); },
+  'look-close': function () { closeLook(); },
+  'ts-down': function () { setSize(LOOK.size - 1); },
+  'ts-up': function () { setSize(LOOK.size + 1); },
   checkin: function (el) { act('checkIn', [el.getAttribute('data-id')]); },
   checkout: function (el) { act('checkOut', [el.getAttribute('data-id')]); },
   'release-ask': function (el) { UI.confirmRelease = el.getAttribute('data-id'); render(); },
@@ -1499,7 +1812,7 @@ var ACT = {
   // page emails, hours and letters (version 2.2)
   'pe-on': function () { act('setPageEmail', [true]); },
   'pe-on-vol': function (el) { act('pageEmailOn', [el.getAttribute('data-id')]); },
-  myhours: function () { go({ name: 'myhours' }); },
+  myhours: function () { TAB = 'hours'; go({ name: 'home' }); },
   'ask-letter': function () { act('requestLetter', []); },
   'vol-open': function (el) { var id = el.getAttribute('data-id'); TAB = 'volunteers'; go({ name: 'vol', id: id }); loadDetail(id); },
   'addhours-open': function () { UI.addHours = true; UI.hDraft = null; UI.hErr = ''; UI.fix = null; render(); focusField('h-hours'); },
@@ -1544,19 +1857,25 @@ rolesEl.addEventListener('click', function (e) {
 app.addEventListener('change', function (e) {
   var t = e.target;
   if (t.closest('#req')) { updateReq(); return; }
-  if (t.id === 'f-start') { UI.pickStart = +t.value; render(); return; }
-  if (t.id === 'f-hours') { UI.pickHours = +t.value; render(); return; }
+  if (t.name === 'theme') { setTheme(t.value); return; }
+  if (t.id === 'ts-range') { setSize(t.value); return; }
   if (t.id === 'f-avail') { act('setAvailability', [t.checked]); return; }
   if (t.id === 'f-pagemail') { act('setPageEmail', [t.checked]); return; }
   if (t.name === 'reason') { UI.reason = t.value; var b = app.querySelector('[data-act="end"]'); if (b) b.disabled = false; }
 });
+app.addEventListener('input', function (e) { if (e.target.id === 'ts-range') setSize(e.target.value); });
+if (aaBtn) aaBtn.addEventListener('click', function () { if (VIEW.name === 'textsize') closeLook(); else openLook(); });
 app.addEventListener('submit', function (e) {
   e.preventDefault();
   var f = e.target;
   if (f.id === 'req') {
     readForm(f);
     if (!reqOK(DRAFT)) { updateReq(); return; }
-    act('requestVigil', [DRAFT], function (st) { DRAFT = null; VIEW = { name: 'vigil', id: st.lastCreated }; UI = {}; window.scrollTo(0, 0); });
+    var sent = DRAFT;
+    act('requestVigil', [DRAFT], function (st) {
+      LS.set('rnLast', JSON.stringify({ unitId: sent.unitId, checkIn: sent.checkIn, ppe: !!sent.ppe }));
+      DRAFT = null; VIEW = { name: 'vigil', id: st.lastCreated }; UI = {}; window.scrollTo(0, 0);
+    });
   } else if (f.id === 'addvol') {
     var p = {
       name: f.querySelector('#v-name').value, email: f.querySelector('#v-email').value,
@@ -1654,6 +1973,7 @@ function startPWA() {
   load();
 }
 
+lookLoad();
 if (MODE === 'gas') {
   if (!KEY) { ST = { role: 'none' }; render(); } else load();
 } else if (MODE === 'pwa') {
