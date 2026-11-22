@@ -7,7 +7,7 @@
 (function () {
 'use strict';
 var H = 3600e3, MIN = 60e3, DAY = 24 * H;
-var APP_VERSION = '2.6.0';
+var APP_VERSION = '2.7.0';
 var FIREBASE_DIR = './vendor/firebase/12.19.0/';
 var GAS = !!(window.google && google.script && google.script.run);
 var MODE = GAS ? 'gas' : (document.documentElement.getAttribute('data-app') === 'pwa' ? 'pwa' : 'none');
@@ -60,6 +60,59 @@ var ICON = {
   letter: '<rect x="4" y="6" width="16" height="12" rx="2"/><path d="m4.5 7 7.5 6 7.5-6"/>'
 };
 function svg(name, cls) { return '<svg class="' + (cls || 'ico') + '" viewBox="0 0 24 24" aria-hidden="true">' + (ICON[name] || '') + '</svg>'; }
+// Version 2.7: motion follows the phone's Reduce Motion setting; LAST_BTN is the button just tapped (it shows a
+// spinner while the server works); UPDATED means a newer version of the app is ready.
+var REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+var LAST_BTN = null, UPDATED = false, SCREEN = '', UPDATE_CHECK = Date.now();
+
+/* ---------- version 2.7: smooth screens ---------- */
+// A new screen replaces the old one; the same screen updates in place (a "morph"): only what changed is touched,
+// so a refresh doesn't flash, jump or move the focus.
+function screenKey() { return [ST ? ST.role : '', KEY ? 1 : 0, TAB, VIEW.name, VIEW.id || '', SIGN.step].join('|'); }
+function paint(html) {
+  var k = screenKey();
+  if (k !== SCREEN || !app.firstChild || app.hasAttribute('aria-busy')) { app.innerHTML = html; SCREEN = k; }
+  else { var t = document.createElement('template'); t.innerHTML = html; morphKids(app, t.content); }
+  app.removeAttribute('aria-busy');
+  placeNowMarks();
+}
+function sameNode(a, b) { return a.nodeType === b.nodeType && a.nodeName === b.nodeName && (a.nodeType !== 1 || (a.id || '') === (b.id || '')); }
+function morphKids(a, b) {
+  var x = a.firstChild, y = b.firstChild;
+  while (y) {
+    var next = y.nextSibling;
+    if (!x) a.appendChild(y);
+    else if (sameNode(x, y)) { morphNode(x, y); x = x.nextSibling; }
+    else { var after = x.nextSibling; a.replaceChild(y, x); x = after; }
+    y = next;
+  }
+  while (x) { var gone = x; x = x.nextSibling; a.removeChild(gone); }
+}
+function morphNode(x, y) {
+  if (x.nodeType !== 1) { if (x.nodeValue !== y.nodeValue) x.nodeValue = y.nodeValue; return; }
+  var tag = x.nodeName, i, at;
+  var typed = tag === 'INPUT' && x.type !== 'checkbox' && x.type !== 'radio', before = typed ? x.getAttribute('value') : null;
+  for (i = x.attributes.length - 1; i >= 0; i--) { at = x.attributes[i].name; if (!y.hasAttribute(at)) x.removeAttribute(at); }
+  for (i = 0; i < y.attributes.length; i++) { at = y.attributes[i]; if (x.getAttribute(at.name) !== at.value) x.setAttribute(at.name, at.value); }
+  if (tag === 'INPUT') {
+    if (!typed) x.checked = y.hasAttribute('checked');
+    // What someone typed stays, unless the app itself put a different value there.
+    else if (y.getAttribute('value') !== before && x !== document.activeElement) x.value = y.getAttribute('value') || '';
+    return;
+  }
+  if (tag === 'TEXTAREA') { if (x.defaultValue !== y.textContent && x !== document.activeElement) { x.defaultValue = y.textContent; x.value = y.textContent; } return; }
+  morphKids(x, y);
+  if (tag === 'SELECT' && x !== document.activeElement) { var o = y.querySelector('option[selected]'); if (o) x.value = o.value; }
+}
+// Moving between screens: a short slide (forward, back) or fade (tabs) where the browser can, nothing at all
+// with Reduce Motion on. The state changes before this is called; fn only draws it.
+function navigate(dir, fn) {
+  var html = document.documentElement;
+  if (!document.startViewTransition || REDUCED || document.visibilityState !== 'visible' || html.hasAttribute('data-nav')) { fn(); return; }
+  html.setAttribute('data-nav', dir);
+  var done = function () { html.removeAttribute('data-nav'); };
+  try { document.startViewTransition(fn).finished.then(done, done); } catch (e) { done(); fn(); }
+}
 
 /* ---------- helpers ---------- */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -166,14 +219,19 @@ function openLook() {
   if (VIEW.name === 'textsize') return;
   if (VIEW.name === 'request' && DRAFT) { var f = document.getElementById('req'); if (f) readForm(f); }
   VIEW = { name: 'textsize', back: VIEW, backUI: UI, y: window.scrollY || 0 };
-  UI = {}; render(); window.scrollTo(0, 0);
-  var h = app.querySelector('h2'); if (h) { h.setAttribute('tabindex', '-1'); try { h.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
+  UI = {};
+  navigate('forward', function () {
+    render(); window.scrollTo(0, 0);
+    var h = app.querySelector('h2'); if (h) { h.setAttribute('tabindex', '-1'); try { h.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
+  });
 }
 function closeLook() {
   var v = VIEW.name === 'textsize' ? VIEW : null;
   VIEW = v && v.back ? v.back : { name: 'home' }; UI = v && v.backUI ? v.backUI : {};
-  render(); window.scrollTo(0, v ? v.y : 0);
-  if (aaBtn) { try { aaBtn.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
+  navigate('back', function () {
+    render(); window.scrollTo(0, v ? v.y : 0);
+    if (aaBtn) { try { aaBtn.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
+  });
 }
 function lookView() {
   var s = LOOK.size;
@@ -257,6 +315,8 @@ function load() {
 function act(fn, args, after, onErr) {
   if (BUSY) return;
   BUSY = true; document.body.classList.add('busy');
+  var btn = LAST_BTN; LAST_BTN = null;
+  if (btn && btn.isConnected && btn.tagName === 'BUTTON') { btn.classList.add('pending'); btn.setAttribute('aria-busy', 'true'); }
   call(fn, args).then(function (st) {
     ST = st; if (after) after(st); render(); if (st.notice) toast(st.notice);
   }, function (err) {
@@ -551,7 +611,7 @@ function signOut() {
   var stop = s.on && s.id ? call('unregisterDevice', [s.id]).catch(function () {}).then(fcmUnregister) : Promise.resolve();
   BUSY = true; document.body.classList.add('busy');
   stop.then(function () {
-    LS.del('key'); LS.del('push'); rolesClear();
+    LS.del('key'); LS.del('push'); LS.del('lastRole'); rolesClear();
     clearTimeout(TEST.timer); TEST = {}; DETAIL = {}; LETTER = {};
     KEY = ''; ST = null; UI = {}; VIEW = { name: 'home' }; TAB = 'vigils'; PASTE = {};
     SIGN = { step: LS.get('signin') === 'link' ? 'paste' : 'email' };
@@ -601,8 +661,10 @@ function roleSwitchHTML() {
   if (MODE !== 'pwa' || !KEY || !ST || ST.role === 'none' || ROLES.key !== KEY || ROLES.list.length < 2) return '';
   return '<span class="roles-label" id="roles-label">Use NODA as</span>' +
     '<div class="roles-seg" role="group" aria-labelledby="roles-label">' + ROLES.list.map(function (r) {
-      return '<button type="button" class="rolebtn" data-act="role-switch" data-role="' + esc(r.role) + '" aria-pressed="' + (r.role === ST.role) + '"' +
-        (BUSY ? ' disabled' : '') + '>' + esc(ROLE_SHORT[r.role]) + '</button>';
+      // (Not disabled while the server works: the screen drew then stayed that way after the answer, in 2.6.
+      // switchRoleTo already waits its turn, and taps are held off while busy.)
+      return '<button type="button" class="rolebtn" data-act="role-switch" data-role="' + esc(r.role) + '" aria-pressed="' + (r.role === ST.role) + '">' +
+        esc(ROLE_SHORT[r.role]) + '</button>';
     }).join('') + '</div>';
 }
 function switchRoleTo(role) {
@@ -620,7 +682,7 @@ function switchRoleTo(role) {
   }, function (err) {
     toast((err && err.message) || 'Couldn’t switch. Try again.');
     ROLES.at = 0; fetchRoles();
-  }).then(function () { BUSY = false; document.body.classList.remove('busy'); render(); window.scrollTo(0, 0); });
+  }).then(function () { BUSY = false; document.body.classList.remove('busy'); navigate('tab', function () { render(); window.scrollTo(0, 0); }); });
 }
 
 /* ---------- phone app: install on the home screen ---------- */
@@ -1369,12 +1431,12 @@ function volVigil(v) {
 /* ---------- coordinator ---------- */
 // Version 2.6: tabs across the bottom, a word under every icon. Volunteers: Vigils, My shifts, My hours.
 // Coordinator: Today, Volunteers, Report, Setup (charge nurses, links and status).
-function tabList() {
-  if (ST.role === 'vol') return [['vigils', 'Vigils', 'heart'], ['shifts', 'My shifts', 'cal'], ['hours', 'My hours', 'clock']];
+function tabList(role) {
+  if ((role || ST.role) === 'vol') return [['vigils', 'Vigils', 'heart'], ['shifts', 'My shifts', 'cal'], ['hours', 'My hours', 'clock']];
   return [['vigils', 'Today', 'home'], ['volunteers', 'Volunteers', 'people'], ['report', 'Report', 'chart'], ['links', 'Setup', 'sliders']];
 }
-function tabsHTML() {
-  var list = tabList();
+function tabsHTML(role) {
+  var list = tabList(role);
   tabs.className = 'tabs n' + list.length;
   return list.map(function (t) {
     return '<button type="button" class="tab" data-act="tab" data-tab="' + t[0] + '"' + (TAB === t[0] ? ' aria-current="page"' : '') + '>' + svg(t[2], 'tico') + '<span>' + t[1] + '</span></button>';
@@ -1556,9 +1618,9 @@ function readLetterForm() {
   var val = function (id) { var el = f.querySelector('#' + id); return el ? el.value : ''; };
   return { from: val('l-from'), to: val('l-to'), salutation: val('l-sal'), note: val('l-note'), signer: val('l-signer'), title: val('l-title') };
 }
-function loadLetter(id, opts) {
+function loadLetter(id, opts, quiet) {
   LETTER = { id: id, opts: opts, data: LETTER.id === id ? LETTER.data : null, loading: true };
-  render();
+  if (!quiet) render();
   call('getLetter', [id, opts]).then(function (d) { if (LETTER.id === id) { LETTER.data = d; LETTER.err = ''; } }, function (err) {
     if (LETTER.id === id) LETTER.err = (err && err.message) || 'Couldn’t make the letter. Try again.';
   }).then(function () { if (LETTER.id === id) { LETTER.loading = false; if (VIEW.name === 'letter') render(); } });
@@ -1685,11 +1747,12 @@ function render() {
   rolesEl.innerHTML = rs; rolesEl.hidden = !rs;
   roleTheme(ST && KEY ? ST.role : '');
   if (aaBtn) aaBtn.setAttribute('aria-pressed', String(look));
-  if (look) { setTabs(false); app.innerHTML = lookView(); placeNowMarks(); return; }
+  if (look) { setTabs(false); paint(lookView()); return; }
   whoEl.hidden = false;
-  if (MODE === 'pwa' && !KEY) { whoEl.textContent = 'Sign in'; setTabs(false); app.innerHTML = signInView(); return; }
+  if (MODE === 'pwa' && !KEY) { whoEl.textContent = 'Sign in'; setTabs(false); paint(signInView()); return; }
   if (!ST) return;
-  if (ST.role === 'none') { whoEl.textContent = MODE === 'pwa' ? 'Sign in' : 'Link not active'; setTabs(false); app.innerHTML = noneView(); return; }
+  if (ST.role === 'none') { whoEl.textContent = MODE === 'pwa' ? 'Sign in' : 'Link not active'; setTabs(false); paint(noneView()); return; }
+  if (LS.get('lastRole') !== ST.role) LS.set('lastRole', ST.role);
   // The role under the name; the role switch says it instead for people on more than one list.
   whoEl.textContent = ST.role === 'rn' ? 'Charge nurse' : ST.role === 'coord' ? 'NODA coordinator' : 'Volunteer';
   whoEl.hidden = !!rs;
@@ -1703,10 +1766,9 @@ function render() {
   else if (TAB === 'volunteers') html = viewVols();
   else if (TAB === 'report') html = viewReport();
   else html = viewSetup();
-  app.innerHTML = html;
-  placeNowMarks();
+  paint(html);
 }
-function go(view) { VIEW = view; UI = {}; render(); window.scrollTo(0, 0); }
+function go(view, dir) { VIEW = view; UI = {}; navigate(dir || 'forward', function () { render(); window.scrollTo(0, 0); }); }
 // Re-render after a tap without the screen jumping: the tapped control stays where it was, and keeps focus.
 function keepPlace(el, fn) {
   var act = el.getAttribute('data-act'), key = el.getAttribute('data-t') || el.getAttribute('data-h') || '';
@@ -1723,8 +1785,13 @@ function copyText(text, input) {
   try { navigator.clipboard.writeText(text).then(function () { toast('Link copied'); }, fallback); } catch (e) { fallback(); }
 }
 var ACT = {
-  tab: function (el) { TAB = el.getAttribute('data-tab'); VIEW = { name: 'home' }; UI = {}; render(); window.scrollTo(0, 0); },
-  home: function () { DRAFT = null; go({ name: 'home' }); },
+  tab: function (el) {
+    var t = el.getAttribute('data-tab');
+    if (t === TAB && VIEW.name === 'home') { window.scrollTo({ top: 0, behavior: REDUCED ? 'auto' : 'smooth' }); return; }
+    TAB = t; VIEW = { name: 'home' }; UI = {};
+    navigate('tab', function () { render(); window.scrollTo(0, 0); });
+  },
+  home: function () { DRAFT = null; go({ name: 'home' }, 'back'); },
   open: function (el) { go({ name: 'vigil', id: el.getAttribute('data-id') }); },
   'new': function () {
     // Where: what this phone paged with last time, when it still fits the Sheet's lists.
@@ -1749,11 +1816,13 @@ var ACT = {
   },
   // Version 2.6: the home screen's one big answer opens the sign-up with that time chosen, at the confirm box.
   pick: function (el) {
-    go({ name: 'vigil', id: el.getAttribute('data-id') });
-    UI.pickStart = +el.getAttribute('data-t'); UI.pickHours = +el.getAttribute('data-h');
-    render();
-    var c = document.getElementById('confirm');
-    if (c) { c.scrollIntoView({ block: 'center' }); try { c.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
+    VIEW = { name: 'vigil', id: el.getAttribute('data-id') };
+    UI = { pickStart: +el.getAttribute('data-t'), pickHours: +el.getAttribute('data-h') };
+    navigate('forward', function () {
+      render();
+      var c = document.getElementById('confirm');
+      if (c) { c.scrollIntoView({ block: 'center' }); try { c.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
+    });
   },
   'pick-start': function (el) { UI.pickStart = +el.getAttribute('data-t'); keepPlace(el, function () { render(); }); },
   'pick-hours': function (el) { UI.pickHours = +el.getAttribute('data-h'); keepPlace(el, function () { render(); }); },
@@ -1782,7 +1851,7 @@ var ACT = {
     copyText(input.value, input);
   },
   // phone app
-  retry: function () { app.innerHTML = '<p class="empty">Loading…</p>'; load(); },
+  retry: function () { app.setAttribute('aria-busy', 'true'); app.innerHTML = '<div class="skel" aria-hidden="true"><i class="sk-title"></i><i class="sk-card"></i></div>'; load(); },
   'signin-paste': function () { SIGN = { step: 'paste', email: SIGN.email }; PASTE = {}; render(); focusField('p-link'); },
   'signin-email': function () { SIGN = { step: 'email', email: SIGN.email }; render(); focusField('s-email'); },
   'signin-restart': function () { SIGN = { step: 'email', email: SIGN.email }; render(); focusField('s-email'); },
@@ -1824,8 +1893,9 @@ var ACT = {
   'bulk-none': function () { Array.prototype.forEach.call(app.querySelectorAll('input[name="bulkvol"]'), function (x) { x.checked = false; }); },
   'letter-open': function (el) {
     var id = el.getAttribute('data-id'), d = ST.letter || {}, v = volById(id), h = v ? v.hours : {};
+    var o = { from: h.first ? isoOf(h.first) : '', to: todayISO(), salutation: 'To whom it may concern', note: '', signer: d.signer || '', title: d.title || 'NODA Lead Coordinator' };
     go({ name: 'letter', id: id });
-    loadLetter(id, { from: h.first ? isoOf(h.first) : '', to: todayISO(), salutation: 'To whom it may concern', note: '', signer: d.signer || '', title: d.title || 'NODA Lead Coordinator' });
+    loadLetter(id, o, true);
   },
   'letter-copy': function () {
     var c = LETTER.data && LETTER.data.letter; if (!c) return;
@@ -1845,7 +1915,7 @@ var ACT = {
 };
 app.addEventListener('click', function (e) {
   var el = e.target.closest('[data-act]'); if (!el || el.disabled) return;
-  var fn = ACT[el.getAttribute('data-act')]; if (fn) fn(el);
+  var fn = ACT[el.getAttribute('data-act')]; if (fn) { LAST_BTN = el; fn(el); LAST_BTN = null; }
 });
 tabs.addEventListener('click', function (e) {
   var el = e.target.closest('[data-act]'); if (el) ACT.tab(el);
@@ -1921,7 +1991,15 @@ app.addEventListener('submit', function (e) {
 // (Not on the phone app's sign-in screen, where it would wipe a half-pasted link.)
 function autoRefreshOK() { return KEY && !BUSY && !editing() && !(MODE === 'pwa' && ST && ST.role === 'none'); }
 setInterval(function () { if (document.visibilityState === 'visible' && autoRefreshOK()) load(); }, 60000);
-document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && autoRefreshOK()) load(); });
+document.addEventListener('visibilitychange', function () {
+  // Version 2.7: a newer version installed while the app was open. Switch to it while the app is out of sight,
+  // or on return if that didn't happen, unless something is being typed.
+  if (UPDATED && (document.visibilityState === 'hidden' || !editing())) { location.reload(); return; }
+  if (document.visibilityState !== 'visible') return;
+  // A phone can keep the app open for days without reloading it: look for a new version at most once an hour.
+  if (PUSH.reg && Date.now() - UPDATE_CHECK > 3600e3) { UPDATE_CHECK = Date.now(); PUSH.reg.update().catch(function () {}); }
+  if (autoRefreshOK()) load();
+});
 
 /* ---------- start ---------- */
 // The phone app reads the key from "#k=" (or "?k=") once, keeps it on this device, and cleans the address bar.
@@ -1942,6 +2020,7 @@ function takeFromUrl() {
 }
 function onSwMessage(e) {
   var d = (e && e.data) || {};
+  if (d.type === 'noda-updated') { if (d.version === APP_VERSION) return; UPDATED = true; if (document.visibilityState === 'hidden' || !ST) location.reload(); return; }
   if (d.type === 'noda-push' && d.kind === 'test') { if (TEST.waiting) testCheckIn(1500); return; }
   if (d.type === 'noda-push') { if (KEY && !BUSY && !editing()) load(); }
   else if (d.type === 'noda-open') { DEEP = /^V-\d{1,9}$/.test(d.vigil || '') ? d.vigil : null; if (KEY) load(); }
@@ -1949,7 +2028,9 @@ function onSwMessage(e) {
 }
 function startPWA() {
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js', { scope: './' }).catch(function () { /* the app still works without it */ });
+    // Version 2.7: register once the page has loaded, so a first visit's saved copy doesn't slow the first screen.
+    var reg = function () { navigator.serviceWorker.register('sw.js', { scope: './' }).catch(function () { /* the app still works without it */ }); };
+    if (document.readyState === 'complete') reg(); else window.addEventListener('load', reg);
     navigator.serviceWorker.ready.then(function (r) { PUSH.reg = r; });
     navigator.serviceWorker.addEventListener('message', onSwMessage);
   }
@@ -1970,12 +2051,20 @@ function startPWA() {
   // Sign-in starts with email, unless this server said email sign-in is off (then: paste a link).
   SIGN = { step: LS.get('signin') === 'link' ? 'paste' : 'email' };
   if (!KEY) { render(); return; }
+  bootShell();
   load();
 }
 
+// Version 2.7: while the first data loads, show the tabs and colors of the role last used on this phone.
+function bootShell() {
+  var r = LS.get('lastRole');
+  if (r !== 'vol' && r !== 'rn' && r !== 'coord') return;
+  roleTheme(r);
+  if (r !== 'rn') { tabs.innerHTML = tabsHTML(r); tabs.hidden = false; document.body.classList.add('has-tabs'); }
+}
 lookLoad();
 if (MODE === 'gas') {
-  if (!KEY) { ST = { role: 'none' }; render(); } else load();
+  if (!KEY) { ST = { role: 'none' }; render(); } else { bootShell(); load(); }
 } else if (MODE === 'pwa') {
   startPWA();
 } else {

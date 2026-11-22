@@ -10,21 +10,22 @@
 <meta name="theme-color" content="#3D3B93" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0F1124" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-title" content="NODA">
+<link rel="preconnect" href="https://script.google.com" crossorigin>
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <div class="wrap">
   <header class="top">
-    <img class="mark" src="icons/icon-192.png" width="44" height="44" alt="">
-    <div class="ttl"><h1>NODA Alert</h1><p id="who">Loading…</p></div>
+    <img class="mark" src="icons/icon-192.png" width="44" height="44" alt="" decoding="async">
+    <div class="ttl"><h1>NODA Alert</h1><p id="who"></p></div>
     <button type="button" class="aa" id="aa"><b aria-hidden="true">Aa</b>Text size</button>
   </header>
   <nav class="tabs" id="tabs" aria-label="Sections" hidden></nav>
-  <main id="app"><p class="empty">Loading…</p></main>
+  <main id="app" aria-busy="true"><div class="skel" aria-hidden="true"><i class="sk-title"></i><i class="sk-card"></i><i class="sk-card sk-tall"></i></div><p class="vh">Loading NODA Alert…</p></main>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <script src="config.js"></script>

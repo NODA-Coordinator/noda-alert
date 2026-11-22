@@ -1,5 +1,14 @@
+/* Self-hosted fonts (SIL Open Font License 1.1, see fonts/LICENSE-*.txt).
+   Files: @fontsource/atkinson-hyperlegible@5.3.0, @fontsource/literata@5.3.0 (Latin subset). */
+@font-face{font-family:"Atkinson Hyperlegible";font-style:normal;font-weight:400;font-display:swap;src:url(fonts/atkinson-hyperlegible-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Atkinson Hyperlegible";font-style:normal;font-weight:700;font-display:swap;src:url(fonts/atkinson-hyperlegible-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:"Atkinson Hyperlegible";font-style:italic;font-weight:400;font-display:swap;src:url(fonts/atkinson-hyperlegible-latin-400-italic.woff2) format("woff2")}
+@font-face{font-family:"Literata";font-style:normal;font-weight:400;font-display:swap;src:url(fonts/literata-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Literata";font-style:normal;font-weight:600;font-display:swap;src:url(fonts/literata-latin-600-normal.woff2) format("woff2")}
 /* NODA Alert styles, shared by the phone app (index.html) and the Apps Script web app (Index.html).
    Edit here, then run: node tools/build.js
+   Version 2.7: tonal pill buttons, a floating see-through tab bar, short slide and fade between screens, skeleton
+   screens while loading, a spinner on the button you tapped. Motion follows the phone's Reduce Motion setting.
    Version 2.6, made for older volunteers: warm off-white or navy, text that grows with the Text size setting
    (html[data-ts], 1 to 5), Light, Dark or Match my phone (html[data-theme]), large buttons, tabs with words.
    Sizes are in rem/em so everything grows with the text. Every text color keeps at least 4.5:1 contrast,
@@ -18,7 +27,8 @@
   --shadow-up:0 18px 40px -20px rgba(26,29,51,.45);
   --f-display:"Literata", Georgia, "Times New Roman", serif;
   --f-body:"Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --f-mono:"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --f-mono:"Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --shine:rgba(255,255,255,.75); --hair:rgba(26,29,51,.08);
   color-scheme:light;
 }
 /* Dark (navy). Used when the phone is in dark mode (unless Light was chosen), or when Dark was chosen. */
@@ -33,7 +43,8 @@
     --role-vol:#A5A3F6; --role-vol-soft:#2A2D59;
     --role-rn:#9FD3F6; --role-rn-soft:#17374D;
     --role-coord:#E29BD2; --role-coord-soft:#43203D;
-    --shadow:0 1px 2px rgba(0,0,0,.35),0 10px 28px -20px rgba(0,0,0,.8);
+    --shadow:0 0 0 1px rgba(255,255,255,.05),0 10px 28px -20px rgba(0,0,0,.8);
+    --shine:rgba(255,255,255,.06); --hair:rgba(255,255,255,.1);
     --shadow-up:0 18px 40px -20px rgba(0,0,0,.75);
     color-scheme:dark;
   }
@@ -48,12 +59,15 @@
   --role-vol:#A5A3F6; --role-vol-soft:#2A2D59;
   --role-rn:#9FD3F6; --role-rn-soft:#17374D;
   --role-coord:#E29BD2; --role-coord-soft:#43203D;
-  --shadow:0 1px 2px rgba(0,0,0,.35),0 10px 28px -20px rgba(0,0,0,.8);
+  --shadow:0 0 0 1px rgba(255,255,255,.05),0 10px 28px -20px rgba(0,0,0,.8);
+  --shine:rgba(255,255,255,.06); --hair:rgba(255,255,255,.1);
   --shadow-up:0 18px 40px -20px rgba(0,0,0,.75);
   color-scheme:dark;
 }
 /* The app takes the color of the role it's in (html[data-role], set by app.js). */
 :root{--accent:var(--role-vol);--accent-soft:var(--role-vol-soft)}
+/* Edges and glows mixed from the role color (browsers without color-mix just leave them out) */
+:root{--tone-edge:color-mix(in srgb,var(--accent) 30%,transparent);--accent-glow:color-mix(in srgb,var(--accent) 55%,transparent);--alert-edge:color-mix(in srgb,var(--alert) 40%,transparent)}
 html[data-role="rn"]{--accent:var(--role-rn);--accent-soft:var(--role-rn-soft)}
 html[data-role="coord"]{--accent:var(--role-coord);--accent-soft:var(--role-coord-soft)}
 
@@ -69,7 +83,7 @@ html[data-ts="5"]{font-size:162.5%}
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:1rem;line-height:1.5;-webkit-text-size-adjust:100%;text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
 .wrap{max-width:35rem;margin:0 auto;padding-inline:max(16px, env(safe-area-inset-left, 0px));padding-block:calc(14px + env(safe-area-inset-top, 0px)) calc(3rem + env(safe-area-inset-bottom, 0px))}
-body.has-tabs .wrap{padding-bottom:calc(7.5rem + env(safe-area-inset-bottom, 0px))}
+body.has-tabs .wrap{padding-bottom:calc(8.5rem + env(safe-area-inset-bottom, 0px))}
 p{margin:0}
 a{color:var(--accent)}
 a.btn{text-decoration:none}
@@ -87,12 +101,12 @@ html[data-role] body::before{content:"";position:fixed;top:0;left:0;right:0;heig
 .ttl h1{font-family:var(--f-display);font-weight:600;font-size:1.3rem;line-height:1.15;margin:0;white-space:nowrap}
 .ttl p{margin:2px 0 0;color:var(--muted);font-size:max(16px,.84rem);line-height:1.3}
 html[data-role] .ttl p{color:var(--accent);font-weight:700}
-.aa{font:inherit;display:inline-flex;align-items:center;gap:.4em;min-height:max(48px,2.6rem);padding:0 .85em;border-radius:999px;border:2px solid var(--edge);background:var(--panel);color:var(--ink);font-weight:700;font-size:max(16px,.88rem);cursor:pointer;white-space:nowrap;flex:none}
+.aa{font:inherit;display:inline-flex;align-items:center;gap:.4em;min-height:max(48px,2.6rem);padding:0 .85em;border-radius:999px;border:1.5px solid var(--edge);background:var(--panel);color:var(--ink);font-weight:700;font-size:max(16px,.88rem);cursor:pointer;white-space:nowrap;flex:none}
 .aa b{font-family:var(--f-display);font-size:1.3em;line-height:1;font-weight:600}
 .aa[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
 
 /* ---------- role switch: three named buttons ---------- */
-.roles{margin:.15rem 0 .25rem}
+.roles{margin:.15rem 0 1rem}
 .roles[hidden]{display:none}
 .roles-label{display:block;font-size:max(16px,.88rem);font-weight:700;color:var(--muted);margin:0 0 .4rem}
 .roles-seg{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:4px;padding:4px;border-radius:16px;background:var(--panel);box-shadow:inset 0 0 0 1.5px var(--line-2)}
@@ -105,14 +119,15 @@ html[data-ts="4"] .roles-seg,html[data-ts="5"] .roles-seg{grid-auto-flow:row}
 .rolebtn:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 
 /* ---------- tabs: across the bottom, a word under every icon ---------- */
-.tabs{position:fixed;left:0;right:0;bottom:0;z-index:8;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:4px;
-  padding:6px max(8px, calc((100% - 35rem) / 2)) calc(8px + env(safe-area-inset-bottom, 0px));background:var(--panel);border-top:1.5px solid var(--line-2)}
+.tabs{position:fixed;z-index:8;left:max(10px, calc((100% - 35rem) / 2 + 10px));right:max(10px, calc((100% - 35rem) / 2 + 10px));bottom:calc(10px + env(safe-area-inset-bottom, 0px));display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:4px;
+  padding:6px;border-radius:28px;background:var(--panel);background:color-mix(in srgb,var(--panel) 86%,transparent);-webkit-backdrop-filter:blur(20px) saturate(1.8);backdrop-filter:blur(20px) saturate(1.8);box-shadow:0 0 0 1px var(--hair),0 14px 34px -14px rgba(20,22,40,.45)}
 .tabs[hidden]{display:none}
 .tab{font:inherit;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:max(56px,3.3rem);border:0;background:none;color:var(--muted);
-  font-size:clamp(14px,.84rem,20px);font-weight:700;line-height:1.15;border-radius:14px;padding:4px 2px;cursor:pointer;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  font-size:clamp(14px,.84rem,20px);font-weight:700;line-height:1.15;border-radius:22px;padding:4px 2px;cursor:pointer;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tabs.n4 .tab{font-size:clamp(13px,.78rem,16px)}
 .tab .tico{width:1.65em;height:1.65em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .tab[aria-current="page"]{color:var(--accent);background:var(--accent-soft)}
+.tab[aria-current="page"] .tico{fill:currentColor;fill-opacity:.22}
 .tab:focus-visible{outline:3px solid var(--accent);outline-offset:-3px}
 
 /* ---------- type ---------- */
@@ -140,21 +155,22 @@ html[data-ts="4"] .roles-seg,html[data-ts="5"] .roles-seg{grid-auto-flow:row}
 .flag{color:var(--candle-ink);font-size:max(16px,.86rem);font-weight:700}
 
 /* ---------- buttons ---------- */
-.btn{font:inherit;font-weight:700;font-size:1rem;line-height:1.25;border-radius:16px;padding:.5em 1em;border:2px solid var(--edge);background:var(--panel);color:var(--ink);cursor:pointer;
-  display:inline-flex;align-items:center;justify-content:center;gap:.5em;min-height:max(48px,2.7rem);text-align:center}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn{font:inherit;font-weight:700;font-size:1rem;line-height:1.25;border-radius:999px;padding:.55em 1.2em;border:0;background:var(--accent-soft);color:var(--accent);cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;gap:.5em;min-height:max(48px,2.7rem);text-align:center;box-shadow:inset 0 0 0 1.5px var(--tone-edge);-webkit-user-select:none;user-select:none;transition:transform .12s ease,background-color .2s ease,box-shadow .2s ease}
+.btn.primary{background:var(--accent);color:var(--accent-ink);box-shadow:0 1px 2px rgba(0,0,0,.1),0 10px 22px -12px var(--accent-glow)}
 .btn.block{display:flex;width:100%}
-.btn.big{min-height:max(56px,3.1rem);font-size:1.08rem;padding:.55em 1em}
-.btn.small{min-height:max(44px,2.4rem);padding:.35em .85em;font-size:max(16px,.9rem);border-radius:14px}
-.btn.quiet{background:transparent;border-color:transparent;color:var(--accent);padding-inline:.4em}
-.btn.outline{border-color:var(--accent);color:var(--accent)}
-.btn.danger{color:var(--alert-ink);border-color:var(--alert);background:var(--alert-soft)}
+.btn.big{min-height:max(56px,3.1rem);font-size:1.08rem;padding:.6em 1.2em}
+.btn.small{min-height:max(44px,2.4rem);padding:.35em .95em;font-size:max(16px,.9rem)}
+.btn.quiet{background:transparent;box-shadow:none;color:var(--accent);padding-inline:.6em}
+.btn.outline{background:var(--accent-soft);color:var(--accent)}
+.btn.danger{background:var(--alert-soft);color:var(--alert-ink);box-shadow:inset 0 0 0 1.5px var(--alert-edge)}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .btn:focus-visible,.card-btn:focus-visible,.pillbtn:focus-visible,.aa:focus-visible,.part-btn:focus-visible,.pill:focus-visible,.len:focus-visible,.li:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-.pillbtn{font:inherit;display:inline-flex;align-items:center;gap:.3em;min-height:max(48px,2.6rem);padding:0 .95em 0 .6em;border-radius:999px;border:2px solid var(--edge);background:var(--panel);color:var(--accent);font-weight:700;font-size:1rem;cursor:pointer;white-space:nowrap}
+.pillbtn{font:inherit;display:inline-flex;align-items:center;gap:.3em;min-height:max(48px,2.6rem);padding:0 .95em 0 .6em;border-radius:999px;border:1.5px solid var(--edge);background:var(--panel);color:var(--accent);font-weight:700;font-size:1rem;cursor:pointer;white-space:nowrap}
 .pillbtn.close{color:var(--ink);padding:0 .95em 0 .7em}
 .back-row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:.2rem}
-.busy .btn,.busy .card-btn,.busy .toggle,.busy .rolebtn,.busy .pill,.busy .len,.busy .part-btn{pointer-events:none;opacity:.6}
+.busy .btn,.busy .card-btn,.busy .toggle,.busy .rolebtn,.busy .pill,.busy .len,.busy .part-btn{pointer-events:none}
+.busy .btn:not(.pending){opacity:.75}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .acts-row{justify-content:flex-start}
 .two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 10px}
@@ -162,7 +178,7 @@ html[data-ts="4"] .roles-seg,html[data-ts="5"] .roles-seg{grid-auto-flow:row}
 
 /* ---------- cards ---------- */
 .stack{display:grid;gap:12px}
-.card{background:var(--panel);border-radius:20px;padding:1.1rem;box-shadow:var(--shadow)}
+.card{background:var(--panel);border-radius:22px;padding:1.15rem;box-shadow:var(--shadow)}
 /* Spacing between the blocks of a screen */
 #app > .card,#app > .card-gap,#app > .note,#app > .stack,#app > .roster,#app > .tbl-wrap,#app > .status,#app > .hist,#app > .slots{margin-top:1rem}
 #app > :first-child,#app > .greet + *,#app > .head + *,#app > .sum + *,#app > .sec + *,#app > .h3 + *{margin-top:0}
@@ -199,7 +215,7 @@ p.big{font-family:var(--f-display);font-weight:600;font-size:1.4rem;line-height:
 .ribbon.dense i.o{background:var(--candle);box-shadow:none}
 .nowmark{position:absolute;top:-5px;bottom:-5px;width:3px;margin-left:-1px;border-radius:2px;background:var(--ink)}
 .ticks,.axis{display:flex;justify-content:space-between;gap:6px;font-size:max(16px,.86rem);color:var(--muted);font-variant-numeric:tabular-nums}
-.axis{font-family:var(--f-mono);font-size:max(15px,.8rem)}
+.axis{font-size:max(15px,.8rem)}
 html[data-ts="4"] .ticks .t2,html[data-ts="4"] .ticks .t4,html[data-ts="5"] .ticks .t2,html[data-ts="5"] .ticks .t4,
 html[data-ts="4"] .axis .t2,html[data-ts="4"] .axis .t4,html[data-ts="5"] .axis .t2,html[data-ts="5"] .axis .t4{display:none}
 .legend{display:flex;flex-wrap:wrap;gap:4px 18px;margin-top:.5rem;font-size:max(16px,.86rem);color:var(--muted)}
@@ -218,7 +234,7 @@ html[data-ts="4"] .lb .ll,html[data-ts="5"] .lb .ll{display:none}
 html[data-ts="4"] .lb .ls,html[data-ts="5"] .lb .ls{display:inline}
 .vcard .rw{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
 .vcard .unit{font-weight:700;font-size:1.04rem}
-.vid{font-family:var(--f-mono);font-size:max(15px,.84rem);color:var(--muted)}
+.vid{font-size:max(15px,.84rem);color:var(--muted);font-variant-numeric:tabular-nums}
 .meta{display:flex;gap:4px 14px;flex-wrap:wrap;margin-top:.5rem;font-size:max(16px,.9rem);color:var(--muted)}
 .meta .warn{color:var(--candle-ink);font-weight:700}
 .lanehd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-top:.6rem;font-size:max(16px,.88rem);color:var(--muted)}
@@ -263,7 +279,7 @@ html[data-ts="5"] .num{display:flex;align-items:baseline;gap:.6rem}
 .part-btn b{font-size:1.06rem}
 .part-btn span{color:var(--muted)}
 .starts{display:grid;grid-template-columns:repeat(auto-fill,minmax(4.1em,1fr));gap:8px;padding:0 1rem 1rem}
-.pill{font:inherit;font-weight:700;font-size:1rem;min-height:max(48px,2.7rem);border-radius:999px;border:2px solid var(--edge);background:var(--panel);color:var(--ink);cursor:pointer;white-space:nowrap;padding:0 .45em}
+.pill{font:inherit;font-weight:700;font-size:1rem;min-height:max(48px,2.7rem);border-radius:999px;border:1.5px solid var(--edge);background:var(--panel);color:var(--ink);cursor:pointer;white-space:nowrap;padding:0 .45em}
 .pill[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .lens{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 html[data-ts="5"] .lens{grid-template-columns:minmax(0,1fr)}
@@ -296,7 +312,7 @@ fieldset{border:0;margin:0;padding:0;min-width:0}
 legend{padding:0}
 .fl{display:block;font-weight:700;font-size:max(16px,.94rem);color:var(--ink-2);margin:0 0 .5rem}
 .rem{font-weight:700;color:var(--muted);font-size:max(16px,.88rem)}
-.opt{display:flex;align-items:center;gap:14px;min-height:max(56px,3.1rem);padding:.55rem .9rem;background:var(--panel);border-radius:16px;border:2px solid var(--line-2);cursor:pointer;line-height:1.35}
+.opt{display:flex;align-items:center;gap:14px;min-height:max(56px,3.1rem);padding:.55rem .9rem;background:var(--panel);border-radius:18px;border:1.5px solid var(--line-2);cursor:pointer;line-height:1.35}
 .opt + .opt{margin-top:8px}
 .opt input{appearance:none;-webkit-appearance:none;font-size:inherit;width:1.5em;height:1.5em;border-radius:7px;border:2px solid var(--edge);background:var(--panel);flex:none;margin:0;display:grid;place-items:center;cursor:pointer}
 .opt input:checked{background:var(--accent);border-color:var(--accent)}
@@ -307,13 +323,13 @@ legend{padding:0}
 .field{display:grid;gap:.4rem;margin-top:.8rem}
 .field:first-child{margin-top:0}
 .field > span,.fl2{font-size:max(16px,.9rem);color:var(--muted);font-weight:700}
-select,textarea,input[type="text"],input[type="email"],input[type="tel"],input[type="url"],input[type="date"],input[type="number"]{font:inherit;font-size:max(16px,1rem);padding:.55em .8em;border-radius:14px;border:2px solid var(--edge);background:var(--panel);color:var(--ink);width:100%;min-height:max(48px,2.7rem)}
+select,textarea,input[type="text"],input[type="email"],input[type="tel"],input[type="url"],input[type="date"],input[type="number"]{font:inherit;font-size:max(16px,1rem);padding:.55em .8em;border-radius:14px;border:1.5px solid var(--edge);background:var(--panel);color:var(--ink);width:100%;min-height:max(48px,2.7rem)}
 textarea{resize:vertical;line-height:1.45}
 select:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:1px}
 .seg{display:flex;flex-wrap:wrap;gap:8px}
 .seg label{position:relative;display:inline-block}
 .seg input{position:absolute;opacity:0;width:1px;height:1px}
-.seg span{display:inline-flex;align-items:center;min-height:max(48px,2.7rem);padding:0 1em;border:2px solid var(--edge);border-radius:999px;background:var(--panel);font-weight:700;font-size:1rem;cursor:pointer;white-space:nowrap}
+.seg span{display:inline-flex;align-items:center;min-height:max(48px,2.7rem);padding:0 1em;border:1.5px solid var(--edge);border-radius:999px;background:var(--panel);font-weight:700;font-size:1rem;cursor:pointer;white-space:nowrap}
 .seg input:checked + span{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .seg input:focus-visible + span{outline:3px solid var(--accent);outline-offset:2px}
 .nprev{padding:1rem;border-radius:18px;background:var(--panel);box-shadow:inset 0 0 0 1.5px var(--line-2)}
@@ -341,7 +357,7 @@ html[data-ts="5"] .stats{grid-template-columns:minmax(0,1fr)}
 .slot.vol{grid-template-columns:auto minmax(0,1fr)}
 html[data-ts="4"] .slot,html[data-ts="5"] .slot{grid-template-columns:minmax(0,1fr);gap:4px}
 html[data-ts="4"] .slot .chip,html[data-ts="5"] .slot .chip{white-space:normal}
-.t24{font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:.94rem}
+.t24{font-variant-numeric:tabular-nums;font-weight:700;font-size:.96rem;letter-spacing:.01em}
 .t12{font-weight:700;font-variant-numeric:tabular-nums}
 .chip{display:inline-flex;align-items:center;gap:6px;font-size:max(15px,.86rem);font-weight:700;padding:.2em .7em;border-radius:999px;white-space:nowrap;justify-self:start;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .chip.open{background:var(--candle-soft);color:var(--candle-ink);box-shadow:inset 0 0 0 1.5px var(--candle)}
@@ -420,7 +436,7 @@ table.hours tfoot th{border-top:2px solid var(--line-2);color:var(--ink)}
 .getapp b{display:block}
 .device{display:grid;gap:10px}
 .device .row{justify-content:flex-start}
-.ver{font-family:var(--f-mono);font-size:max(14px,.8rem);color:var(--muted);margin:0}
+.ver{font-size:max(14px,.8rem);color:var(--muted);margin:0;font-variant-numeric:tabular-nums}
 .paste{display:grid;gap:12px}
 .paste input[type="url"]{font-family:var(--f-mono)}
 .paste input.code{font-family:var(--f-mono);font-size:1.5rem;letter-spacing:.25em;max-width:11ch}
@@ -466,8 +482,8 @@ html[data-ts="5"] .thbox{flex-direction:row;justify-content:flex-start;gap:14px;
 html[data-ts="5"] .tsw{width:4.5rem;flex:none}
 
 /* ---------- toast ---------- */
-.toast{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);max-width:33rem;margin:0 auto;z-index:9;background:var(--ink);color:var(--bg);padding:.75rem .9rem;border-radius:14px;font-weight:700;font-size:max(16px,.94rem);box-shadow:var(--shadow-up)}
-body.has-tabs .toast{bottom:calc(env(safe-area-inset-bottom,0px) + 6.8rem)}
+.toast{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);max-width:33rem;margin:0 auto;z-index:9;background:var(--ink);color:var(--bg);padding:.8rem 1rem;border-radius:18px;font-weight:700;font-size:max(16px,.94rem);box-shadow:var(--shadow-up)}
+body.has-tabs .toast{bottom:calc(env(safe-area-inset-bottom,0px) + 7.6rem)}
 @media (prefers-reduced-motion: reduce){ .toggle input,.toggle input::after,.sw,.sw::after{transition:none} }
 
 /* ---------- service letter: on screen as a preview, and on paper ---------- */
@@ -487,4 +503,63 @@ body.has-tabs .toast{bottom:calc(env(safe-area-inset-bottom,0px) + 6.8rem)}
   .top,.tabs,.roles,.toast,.noprint,.banner,.getapp{display:none !important}
   .wrap{max-width:none;padding:0}
   .letter{border:0;border-radius:0;box-shadow:none;padding:0;margin:0;font-size:12pt}
+}
+
+/* ---------- version 2.7: loading, waiting and moving between screens ---------- */
+p,li{text-wrap:pretty}
+/* Skeleton: the shape of the first screen while the server answers */
+.skel{display:grid;gap:14px;padding-top:.9rem}
+.skel i{display:block;border-radius:22px;background-color:var(--panel);background-image:linear-gradient(100deg,transparent 30%,var(--shine) 50%,transparent 70%);background-size:220% 100%;box-shadow:var(--shadow);animation:noda-shine 1.3s ease-in-out infinite}
+.skel .sk-title{height:2.1rem;width:64%;border-radius:12px;box-shadow:none}
+.skel .sk-card{height:8rem}
+.skel .sk-tall{height:13rem}
+@keyframes noda-shine{from{background-position:120% 0}to{background-position:-120% 0}}
+/* The button you tapped shows a spinner until the server answers */
+/* (the label steps aside for a spinner, so the button keeps its size and nothing on the screen moves) */
+.btn{--spin:var(--accent)}
+.btn.primary{--spin:var(--accent-ink)}
+.btn.danger{--spin:var(--alert-ink)}
+.btn.pending{position:relative;color:transparent !important}
+.btn.pending > *{visibility:hidden}
+.btn.pending::after{content:"";position:absolute;left:50%;top:50%;width:1.2em;height:1.2em;margin:-.6em 0 0 -.6em;border-radius:50%;border:.17em solid var(--spin);border-right-color:transparent;animation:noda-spin .7s linear infinite}
+@keyframes noda-spin{to{transform:rotate(360deg)}}
+/* A press you can feel */
+.part-btn,.len,.pill,.li,.card-btn,.rolebtn,.tab,.aa,.pillbtn{transition:transform .12s ease,background-color .2s ease,color .2s ease}
+.btn:active:not(:disabled),.part-btn:active,.len:active,.pill:active,.li:active,.rolebtn:active,.tab:active,.aa:active,.pillbtn:active{transform:scale(.97)}
+.card-btn:active{transform:scale(.99)}
+/* Messages rise into view */
+.toast:not([hidden]){animation:noda-toast .26s cubic-bezier(.2,.8,.2,1)}
+@keyframes noda-toast{from{opacity:0;transform:translateY(12px) scale(.98)}}
+/* Moving between screens (View Transitions, where the browser has them): the header and tabs stay put while
+   the screen slides a little and fades, or simply fades between tabs. */
+.top{view-transition-name:noda-top}
+.tabs{view-transition-name:noda-tabs}
+/* Material's "shared axis" and "fade through": the old screen leaves fast, then the new one settles in, so the
+   two never sit on top of each other for long. */
+html[data-nav]::view-transition-old(root){animation:noda-out .1s cubic-bezier(.4,0,1,1) both}
+html[data-nav]::view-transition-new(root){animation:noda-in .21s cubic-bezier(0,0,.2,1) .08s both}
+html[data-nav="forward"]::view-transition-old(root){animation-name:noda-out-l}
+html[data-nav="forward"]::view-transition-new(root){animation-name:noda-in-r}
+html[data-nav="back"]::view-transition-old(root){animation-name:noda-out-r}
+html[data-nav="back"]::view-transition-new(root){animation-name:noda-in-l}
+::view-transition-group(noda-top){animation-duration:.3s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}
+@keyframes noda-out{to{opacity:0}}
+@keyframes noda-in{from{opacity:0}}
+@keyframes noda-out-l{to{opacity:0;transform:translateX(-24px)}}
+@keyframes noda-in-r{from{opacity:0;transform:translateX(24px)}}
+@keyframes noda-out-r{to{opacity:0;transform:translateX(24px)}}
+@keyframes noda-in-l{from{opacity:0;transform:translateX(-24px)}}
+/* The tab bar slides away on screens without it and back on return. During a change the browser would keep
+   blurring behind the bar's old place after it has gone, so the blur is switched off for those 0.3 seconds. */
+::view-transition-group(noda-tabs){-webkit-backdrop-filter:none;backdrop-filter:none}
+::view-transition-old(noda-tabs):only-child{animation:noda-tabs-down .2s cubic-bezier(.4,0,1,1) both}
+::view-transition-new(noda-tabs):only-child{animation:noda-tabs-up .3s cubic-bezier(.2,.8,.2,1) both}
+@keyframes noda-tabs-down{to{opacity:0;transform:translateY(110%)}}
+@keyframes noda-tabs-up{from{opacity:0;transform:translateY(110%)}}
+@media (prefers-reduced-motion: reduce){
+  .skel i{animation:none}
+  .btn.pending::after{animation-duration:2.4s}
+  .btn:active,.part-btn:active,.len:active,.pill:active,.li:active,.card-btn:active,.rolebtn:active,.tab:active,.aa:active,.pillbtn:active{transform:none}
+  .toast:not([hidden]){animation:none}
+  ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none !important}
 }
