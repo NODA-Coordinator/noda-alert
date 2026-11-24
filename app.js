@@ -7,7 +7,7 @@
 (function () {
 'use strict';
 var H = 3600e3, MIN = 60e3, DAY = 24 * H;
-var APP_VERSION = '2.8.0';
+var APP_VERSION = '2.9.0';
 var FIREBASE_DIR = './vendor/firebase/12.19.0/';
 var GAS = !!(window.google && google.script && google.script.run);
 var MODE = GAS ? 'gas' : (document.documentElement.getAttribute('data-app') === 'pwa' ? 'pwa' : 'none');
@@ -122,26 +122,70 @@ function navigate(dir, fn) {
 /* ---------- helpers ---------- */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function pad(n) { return (n < 10 ? '0' : '') + n; }
-function t24(ts) { var d = new Date(ts); return pad(d.getHours()) + pad(d.getMinutes()); }
-function t12(ts) { var d = new Date(ts), h = d.getHours(), m = d.getMinutes(), ap = h < 12 ? 'AM' : 'PM'; h = h % 12 || 12; return (m ? h + ':' + pad(m) : String(h)) + ' ' + ap; }
-function r12(a, b) { var A = t12(a), B = t12(b); return A.slice(-2) === B.slice(-2) ? A.slice(0, -3) + '–' + B : A + '–' + B; }
+// Version 2.9: every time is shown in the hospital's time zone (ST.tz from the server), whatever the phone is set to.
+// zp(ts) = that time's parts there: {y, mo, d, h, mi, wd}.
+var TZF = {}, WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function zp(ts) {
+  var tz = ST && ST.tz, f = tz ? TZF[tz] : null;
+  if (tz && f === undefined) {
+    try { f = TZF[tz] = new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', weekday: 'short', hourCycle: 'h23' }); }
+    catch (e) { f = TZF[tz] = null; }
+  }
+  if (!f) { var d = new Date(ts); return { y: d.getFullYear(), mo: d.getMonth() + 1, d: d.getDate(), h: d.getHours(), mi: d.getMinutes(), wd: d.getDay() }; }
+  var o = {};
+  f.formatToParts(new Date(ts)).forEach(function (p) { o[p.type] = p.value; });
+  return { y: +o.year, mo: +o.month, d: +o.day, h: (+o.hour) % 24, mi: +o.minute, wd: WD.indexOf(o.weekday) };
+}
+// "Times are Central time (CST)." when the phone is set to another time zone, so nobody is an hour off.
+function tzNote() {
+  try {
+    if (!ST || !ST.tz || Intl.DateTimeFormat().resolvedOptions().timeZone === ST.tz) return '';
+    var z = new Intl.DateTimeFormat('en-US', { timeZone: ST.tz, timeZoneName: 'short' }).formatToParts(new Date()).filter(function (p) { return p.type === 'timeZoneName'; })[0];
+    return '<p class="hint tznote">Times are the hospital’s time' + (z ? ' (' + esc(z.value) + ')' : '') + ', not your phone’s.</p>';
+  } catch (e) { return ''; }
+}
+// On the two nights a year the clocks change, a time near the change carries its zone ("1:30 AM CDT", "1:30 AM CST"),
+// so the two 1:30 AMs can be told apart. '' the rest of the year. Worked out once per hour of time.
+var TZN = {}, TZC = {};
+function zoneTag(ts) {
+  var tz = ST && ST.tz;
+  if (!tz) return '';
+  var k = tz + Math.floor(ts / H);
+  if (TZC[k] !== undefined) return TZC[k];
+  var f = TZN[tz];
+  if (f === undefined) { try { f = TZN[tz] = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }); } catch (e) { f = TZN[tz] = null; } }
+  var z = function (t) { var p = f.formatToParts(new Date(t)).filter(function (x) { return x.type === 'timeZoneName'; })[0]; return p ? p.value : ''; };
+  var tag = '';
+  if (f) { var a = z(ts - 3 * H), b = z(ts + 3 * H); if (a && b && a !== b) tag = ' ' + z(ts); }
+  return (TZC[k] = tag);
+}
+function t24(ts) { var d = zp(ts); return pad(d.h) + pad(d.mi) + zoneTag(ts); }
+// "2 PM", "2:30 PM"; t12p gives the parts, so a range can say AM or PM once.
+function t12p(ts) { var d = zp(ts), h = d.h; return { n: (h % 12 || 12) + (d.mi ? ':' + pad(d.mi) : ''), ap: h < 12 ? 'AM' : 'PM', z: zoneTag(ts) }; }
+function t12(ts) { var p = t12p(ts); return p.n + ' ' + p.ap + p.z; }
+function rangeJoin(a, b, mid) { var A = t12p(a), B = t12p(b); return A.ap === B.ap && !A.z && !B.z ? A.n + mid + B.n + ' ' + B.ap : A.n + ' ' + A.ap + A.z + mid + B.n + ' ' + B.ap + B.z; }
+function r12(a, b) { return rangeJoin(a, b, '–'); }
 function r24(a, b) { return t24(a) + '–' + t24(b); }
-function midnight(ts) { var d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); }
+// The day a time falls on, as a number that only compares and subtracts (whole days apart): the UTC midnight of that
+// date in the hospital's time zone.
+function midnight(ts) { var d = zp(ts); return Date.UTC(d.y, d.mo - 1, d.d); }
 function dayLabel(ts) {
   var diff = Math.round((midnight(ts) - midnight(Date.now())) / DAY);
   if (diff === 0) return 'Today'; if (diff === 1) return 'Tomorrow'; if (diff === -1) return 'Yesterday';
-  return new Date(ts).toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' });
+  var d = zp(ts);
+  return WD[d.wd] + ', ' + d.mo + '/' + d.d;
 }
 // "today", "tomorrow", or "Sun, 11/1" (a weekday keeps its capital).
 function dayWord(ts) { var d = dayLabel(ts); return /^(Today|Tomorrow|Yesterday)$/.test(d) ? d.toLowerCase() : d; }
-function shortDate(ts) { return new Date(ts).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' }); }
-function longDate(ts) { return new Date(ts).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); }
-function medDate(ts) { return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+function shortDate(ts) { var d = zp(ts); return d.mo + '/' + d.d; }
+function longDate(ts) { var d = zp(ts); return MONTHS[d.mo - 1] + ' ' + d.d + ', ' + d.y; }
+function medDate(ts) { var d = zp(ts); return MONTHS[d.mo - 1].slice(0, 3) + ' ' + d.d + ', ' + d.y; }
 function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
 // 4.5, 38, -0.5 (one decimal at most), and "4.5 hours" / "1 hour"
 function hrsNum(n) { var r = Math.round((+n || 0) * 10) / 10; return (r < 0 ? '−' : '') + (Math.abs(r) % 1 ? Math.abs(r).toFixed(1) : String(Math.abs(r))); }
 function hrsTxt(n) { var r = Math.round((+n || 0) * 10) / 10; return hrsNum(n) + (Math.abs(r) === 1 ? ' hour' : ' hours'); }
-function isoOf(ts) { var d = new Date(ts); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+function isoOf(ts) { var d = zp(ts); return d.y + '-' + pad(d.mo) + '-' + pad(d.d); }
 function todayISO() { return isoOf(Date.now()); }
 // Where volunteers check in, as the server words it: "at the charge RN desk", "with the HUC".
 function where(v) { return v.where || 'at the charge RN desk'; }
@@ -156,7 +200,7 @@ var LS = {
   del: function (k) { try { window.localStorage.removeItem('noda.' + k); } catch (e) { /* nothing to remove */ } }
 };
 // "Good morning", "Good afternoon", "Good evening"
-function greeting() { var h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
+function greeting() { var h = zp(Date.now()).h; return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
 function firstName(n) { return String(n || '').trim().split(/\s+/)[0] || ''; }
 // "Sam O." -> "SO", "Maria Keller" -> "MK"
 function initials(n) {
@@ -164,13 +208,19 @@ function initials(n) {
   return ((p[0] || '').charAt(0) + (p.length > 1 ? p[p.length - 1].charAt(0) : '')).toUpperCase() || '?';
 }
 // The way the server writes a time in a page: "3:30 PM", "12:00 PM".
-function hmm(ts) { var d = new Date(ts), h = d.getHours(), ap = h < 12 ? 'AM' : 'PM'; return (h % 12 || 12) + ':' + pad(d.getMinutes()) + ' ' + ap; }
-// "from 2 to 4 PM", "from 11 PM to 1 AM"
-function fromTo(a, b) { var A = t12(a), B = t12(b); return A.slice(-2) === B.slice(-2) ? A.slice(0, -3) + ' to ' + B : A + ' to ' + B; }
+function hmm(ts) { var d = zp(ts), h = d.h, ap = h < 12 ? 'AM' : 'PM'; return (h % 12 || 12) + ':' + pad(d.mi) + ' ' + ap + zoneTag(ts); }
+// "2 to 4 PM", "11 PM to 1 AM"
+function fromTo(a, b) { return rangeJoin(a, b, ' to '); }
+// Version 2.9: a stretch that ends on another day names that day: "2–6 PM", "10:30 PM to 8:30 PM tomorrow".
+// An end at exactly midnight counts as the same day ("11 PM–12 AM").
+function endsOtherDay(a, b) { return midnight(b - 1) !== midnight(a); }
+function span12(a, b) { return endsOtherDay(a, b) ? t12(a) + ' to ' + t12(b) + ' ' + dayWord(b) : r12(a, b); }
+// "until 6 PM", or "until 2 AM tomorrow" when it ends on another day than today.
+function until12(b, now) { return 'until ' + t12(b) + (endsOtherDay(now, b) ? ' ' + dayWord(b) : ''); }
 // A stretch of open hours, by when it starts: "This afternoon", "Tonight", "Overnight", "Tomorrow morning", "Sun, 11/29 evening".
 function partLabel(t, now) {
   if (t <= now) return 'Open now';
-  var h = new Date(t).getHours(), diff = Math.round((midnight(t) - midnight(now)) / DAY);
+  var h = zp(t).h, diff = Math.round((midnight(t) - midnight(now)) / DAY);
   var part = h < 5 ? 'overnight' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 21 ? 'evening' : 'night';
   if (diff === 0) return { overnight: 'Overnight', morning: 'This morning', afternoon: 'This afternoon', evening: 'This evening', night: 'Tonight' }[part];
   if (diff === 1 && part === 'overnight') return 'Overnight';
@@ -287,13 +337,20 @@ function readConfig() {
 /* ---------- server ---------- */
 // Apps Script version: google.script.run. Phone app: POST {fn, key, args} as text/plain to the /exec URL.
 // text/plain keeps it a CORS "simple request" (no preflight, which Apps Script can't answer).
+// Version 2.9: a request that hasn't answered in 45 seconds stops, so the screen never waits forever on a weak
+// connection. (A page sent again after that is safe: its request ID makes the server send it only once.)
 function apiCall(fn, args, key) {
+  var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  var timer = ctl ? setTimeout(function () { ctl.abort(); }, 45000) : null;
+  var done = function () { if (timer) clearTimeout(timer); };
   return fetch(CFG.apiUrl, {
     method: 'POST', redirect: 'follow', credentials: 'omit',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ fn: fn, key: key, args: args || [] })
+    body: JSON.stringify({ fn: fn, key: key, args: args || [] }),
+    signal: ctl ? ctl.signal : undefined
   }).then(function (res) {
     return res.text().then(function (t) {
+      done();
       var j = null;
       try { j = JSON.parse(t); } catch (e) { j = null; }
       if (!j || typeof j !== 'object') {
@@ -302,8 +359,8 @@ function apiCall(fn, args, key) {
       }
       if (j.ok !== true) throw new Error(j.error || 'Something went wrong. Try again.');
       return j.data;
-    });
-  }, function () { throw new Error('Couldn’t reach NODA Alert. Check your connection and try again.'); });
+    }, function () { done(); throw new Error('Couldn’t reach NODA Alert. Check your connection and try again.'); });
+  }, function () { done(); throw new Error('Couldn’t reach NODA Alert. Check your connection and try again.'); });
 }
 function call(fn, args) {
   if (MODE === 'pwa') return apiCall(fn, args, KEY);
@@ -344,6 +401,7 @@ function editing() {
   var a = document.activeElement;
   return VIEW.name === 'request' || VIEW.name === 'letter' || VIEW.name === 'bulk' || VIEW.name === 'textsize' || UI.addHours || UI.fix || UI.addVol || UI.addRn ||
     UI.endAsk || UI.confirmRelease || UI.confirmReset || UI.confirmRn || UI.confirmSignOut || UI.confirmPause || UI.confirmOthers ||
+    UI.confirmOut || UI.confirmRemove || UI.confirmClear ||
     (a && /INPUT|SELECT|TEXTAREA/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio');
 }
 // Version 2.8: a page notification opens the sign-up at Check and confirm with the suggested time chosen, the
@@ -387,12 +445,31 @@ function keepConfirm(c) {
   ro.observe(app);
   if (aaBtn && aaBtn.parentNode) ro.observe(aaBtn.parentNode);
 }
+// Version 2.9: what a tapped notification opens. A page or open-hour alert opens the sign-up; a reminder, a late
+// check-in or a canceled shift opens the volunteer's home screen, where that shift is first. Since server 2.7 a phone
+// gets every notice its person is due in any mode, so a notice for another mode switches to it first: a volunteer's
+// alert to Volunteer, a nurse's or coordinator's notice from Volunteer to Charge nurse or Coordinator.
+var KIND_ROLE = { 'new': 'vol', repage: 'vol', gap: 'vol', remind: 'vol', late: 'vol', cancel: 'vol', thanks: 'vol',
+  'rn-signup': 'rn', 'rn-late': 'rn', endsoon: 'rn', escalate: 'rn', coord: 'coord' };
+var SIGNUP_KINDS = { 'new': 1, repage: 1, gap: 1 };
+function deepRole(kind) {
+  var want = KIND_ROLE[kind];
+  if (!want || !ST) return '';
+  if (want === 'vol') return ST.role !== 'vol' && hasRole('vol') ? 'vol' : '';
+  if (ST.role !== 'vol') return '';
+  var other = want === 'rn' ? 'coord' : 'rn';
+  return hasRole(want) ? want : hasRole(other) ? other : '';
+}
 function afterLoad() {
   if (DEEP && ST && ST.role !== 'none') {
-    var id = DEEP; DEEP = null;
-    if (vigilById(id)) {
+    var d = DEEP, to = MODE === 'pwa' && !d.tried ? deepRole(d.kind) : '';
+    if (to) { d.tried = true; switchRoleTo(to); return; }
+    DEEP = null;
+    if (d.vigil && vigilById(d.vigil)) {
       if (ST.role === 'coord') TAB = 'vigils';
-      if (ST.role === 'vol') openSignup(id); else go({ name: 'vigil', id: id });
+      if (ST.role !== 'vol') go({ name: 'vigil', id: d.vigil });
+      else if (!d.kind || SIGNUP_KINDS[d.kind]) openSignup(d.vigil);
+      else { TAB = 'vigils'; if (VIEW.name !== 'home') go({ name: 'home' }, 'back'); else window.scrollTo(0, 0); }
     }
   }
   if (MODE === 'pwa' && Date.now() - PUSH.lastRefresh > 6 * H) pushRefresh();
@@ -404,18 +481,38 @@ function afterLoad() {
 function vigilById(id) { for (var i = 0; i < ST.vigils.length; i++) if (ST.vigils[i].id === id) return ST.vigils[i]; return null; }
 function vEnd(v) { return v.end || v.start + (v.windowH || 0) * H; }
 function signupsOf(v) { return ST.slots.filter(function (s) { return s.vigilId === v.id; }).sort(function (a, b) { return a.start - b.start; }); }
-function whoAt(list, t) { for (var i = 0; i < list.length; i++) if (list[i].start <= t && t < list[i].end) return list[i]; return null; }
+// Version 2.9, as the server counts it: a volunteer is due at the start of their hours (or 30 minutes after signing up
+// for hours under way). LATE_SHOW after that with no check-in they show as not checked in, and the nurse is asked;
+// LATE_OPEN after it their hours count as open again.
+var LATE_SHOW = 5 * MIN, LATE_OPEN = 20 * MIN;
+function dueOf(s) { return s.due || s.start; }
+function isLate(s, now) { return !s.inAt && !s.outAt && s.start <= now && now < s.end && now >= dueOf(s) + LATE_SHOW; }
+// Whether sign-up s holds the hour that starts at t: hours that have passed, whoever signed up; the hour under way,
+// while they're checked in or not yet LATE_OPEN past due; later hours, unless they checked out (left early).
+function holds(s, t, now) {
+  if (!(s.start <= t && t < s.end)) return false;
+  if (t + H <= now) return true;
+  if (s.outAt) return false;
+  return t > now || !!s.inAt || now < dueOf(s) + LATE_OPEN;
+}
+// The sign-up holding the hour at t (with now), or any sign-up for it (without: an ended vigil's record).
+function whoAt(list, t, now) {
+  for (var i = 0; i < list.length; i++) if (now === undefined ? list[i].start <= t && t < list[i].end : holds(list[i], t, now)) return list[i];
+  return null;
+}
 function signupState(v, s, now) {
   if (v.status !== 'active') return s.start >= v.ended ? 'cancelled' : 'done';
   if (s.outAt || s.end <= now) return 'done';
-  if (s.start <= now) return s.inAt ? 'bedside' : 'due';
+  if (s.start <= now) return s.inAt ? 'bedside' : now >= dueOf(s) + LATE_SHOW ? 'late' : 'due';
   return 'taken';
 }
+// Sign-ups whose volunteer hasn't checked in, LATE_SHOW or more past due (the nurse is asked about them).
+function lateOf(v, now) { return v.status === 'active' ? signupsOf(v).filter(function (s) { return isLate(s, now); }) : []; }
 // One cell per hour of the vigil: {start, end, s (the sign-up covering it, if any), st (its state)}.
 function cells(v, now) {
   var list = signupsOf(v), out = [], end = vEnd(v);
   for (var t = v.start; t < end; t += H) {
-    var s = whoAt(list, t), st;
+    var s = v.status === 'active' ? whoAt(list, t, now) : whoAt(list, t), st;
     if (v.status !== 'active') st = t >= v.ended ? 'cancelled' : (s ? 'done' : 'missed');
     else if (t + H <= now) st = s ? 'done' : 'missed';
     else if (t <= now) st = s ? signupState(v, s, now) : 'opennow';
@@ -513,11 +610,14 @@ function lane(v, now) {
     '<span class="axis" aria-hidden="true"><span>' + tick(0) + '</span><span class="t2">' + tick(1) + '</span><span>' + tick(2) + '</span><span class="t4">' + tick(3) + '</span><span>' + tick(4) + '</span></span>';
 }
 function vigilCard(v, mode, now) {
-  var s = stats(v, now), meta;
-  if (v.status !== 'active') meta = '<span>Ended ' + t24(v.ended) + ' · ' + esc(v.reason) + '</span>';
-  else meta = '<span>Next 12 h: ' + plural(s.open12, 'open hour') + '</span>' + (s.gap ? '<span class="warn">' + (s.gap.start <= now ? 'Open now' : 'Gap at ' + t24(s.gap.start)) + '</span>' : '<span>Fully covered</span>');
+  var s = stats(v, now), meta, late = lateOf(v, now);
+  // Version 2.9: the end reason only when the server sends it (coordinators); warnings first.
+  if (v.status !== 'active') meta = '<span>Ended ' + t24(v.ended) + (v.reason ? ' · ' + esc(v.reason) : '') + '</span>';
+  else meta = (noPhones(v) ? '<span class="warn">The page reached no phone</span>' : '') +
+    (late.length ? '<span class="warn">Not checked in: ' + esc(late.map(function (x) { return x.volName; }).join(', ')) + '</span>' : '') +
+    '<span>Next 12 h: ' + plural(s.open12, 'open hour') + '</span>' + (s.gap ? '<span class="warn">' + (s.gap.start <= now ? 'Open now' : 'Gap at ' + t24(s.gap.start)) + '</span>' : '<span>Fully covered</span>');
   return '<button type="button" class="card card-btn vcard" data-act="open" data-id="' + esc(v.id) + '">' +
-    '<span class="rw"><span class="unit">' + esc(v.unitName) + '</span><span class="vid">' + esc(v.id) + '</span></span>' +
+    '<span class="rw"><span class="unit">' + esc(v.unitName) + (v.practice ? ' <span class="chip practice">Practice</span>' : '') + '</span><span class="vid">' + esc(v.id) + '</span></span>' +
     (v.status === 'active' ? '<span class="lanehd"><span>Next 12 hours</span><span>Now ' + t24(now) + '</span></span>' + lane(v, now) : '') +
     '<span class="meta">' + meta + '</span></button>';
 }
@@ -870,7 +970,7 @@ function notifCard() {
     // Volunteers: the Available switch above and Email me alerts too below already say where alerts go.
     sub = coord ? 'Vigil updates come to this phone' + (appOnly() ? '.' : ' and by email.') : rn ? 'You hear when a volunteer signs up for a vigil you paged, or an hour still has no one.' : '';
     acts = '<button type="button" class="btn small" data-act="push-test"' + dis + (TEST.waiting ? ' disabled' : '') + '>Send a test</button><button type="button" class="btn small quiet" data-act="push-off"' + dis + '>Turn off</button>';
-    extra = testLine() + (coord || rn ? '' : pageEmailBlock());
+    extra = testLine() + (coord || rn ? '' : pageEmailBlock() + dndBlock());
   } else {
     head = coord ? 'Get vigil updates on this phone' : rn ? 'Know when volunteers sign up' : !appOnly() ? 'Get pages on this phone' : ST.me.devices ? 'Get pages on this phone too' : 'Turn on notifications to get pages';
     chip = '<span class="chip off">Off</span>';
@@ -885,6 +985,13 @@ function notifCard() {
     '<div class="row"><span><b>' + head + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</span>' + chip + '</div>' +
     (PUSH.err ? '<p class="err" role="alert">' + esc(PUSH.err) + '</p>' : '') +
     (acts ? '<div class="acts">' + acts + '</div>' : '') + extra + '</section>';
+}
+// Version 2.9: a page can't ring through Do Not Disturb or silent mode on its own; the volunteer has to let it.
+function dndBlock() {
+  return '<details class="dnd"><summary>Let pages through Do Not Disturb</summary><p class="hint m0">' +
+    (isIOS() ? 'Open Settings, then Focus, then Do Not Disturb (and Sleep, if you use it). Tap Apps, then Allow Notifications From, then add NODA. Keep your ringer on while you’re on call: silent mode mutes notification sounds.'
+      : isAndroid() ? 'Open Settings, then Modes (or Notifications), then Do Not Disturb. Under the apps that can interrupt, add NODA Alert. Keep your ringer on while you’re on call. Menu names vary by phone.'
+      : 'On your phone, let NODA Alert through Do Not Disturb, and keep the ringer on while you’re on call.') + '</p></details>';
 }
 // This phone's row from the server (volunteers), if it is registered.
 function thisPhone() {
@@ -1103,8 +1210,9 @@ function rnHome() {
     ? '<button type="button" class="btn primary big block" data-act="new">Request a NODA volunteer</button>'
     : '<p class="note">Add at least one unit on the Units tab of the Sheet before paging.</p>';
   var reachNote = appOnly() && !reachN() ? '<p class="note">No volunteers have NODA notifications on yet, so a page won’t reach anyone.</p>' : '';
-  // A phone gets pages only while NODA is in Volunteer mode on it (version 2.5, when email doesn't back them up).
-  var modeNote = appOnly() && MODE === 'pwa' && hasRole('vol') ? '<p class="hint">You get NODA pages on this phone only in Volunteer mode.</p>' : '';
+  // Before server 2.7 a phone got pages only while NODA was in Volunteer mode on it. From 2.7 it gets them in every mode.
+  var modeNote = appOnly() && MODE === 'pwa' && hasRole('vol') && !serverAtLeast('2.7.0') ? '<p class="hint">You get NODA pages on this phone only in Volunteer mode.</p>' : '';
+  var warn = staleBanner(now);
   var list = active.length ? '<div class="stack">' + active.map(function (v) { return vigilCard(v, 'rn', now); }).join('') + '</div>' : '<p class="empty">No active vigils.</p>';
   var idle = '';
   if (active.length) {
@@ -1114,33 +1222,38 @@ function rnHome() {
   }
   var endedHTML = ended.length ? '<h3 class="sec">Ended in the last day</h3><div class="stack">' + ended.map(function (v) { return vigilCard(v, 'rn', now); }).join('') + '</div>' : '';
   if (!coord) {
-    return installBanner() + getAppCard() +
+    return installBanner() + getAppCard() + warn +
       '<h2 class="greet">' + greeting() + (ST.name ? ', ' + esc(firstName(ST.name)) : '') + '.</h2>' +
       req + '<p class="hint">' + esc(reachText()) + '.</p>' + reachNote + modeNote +
-      '<h3 class="sec">Active now</h3>' + list + idle + endedHTML + deviceCard(notifCard());
+      '<h3 class="sec">Active now</h3>' + list + idle + endedHTML + tzNote() + deviceCard(notifCard());
   }
   var sum = active.length
     ? (active.length === 1 ? 'One vigil is active. ' : active.length + ' vigils are active. ') +
       (open12 ? plural(open12, 'hour') + ' in the next 12 ' + (open12 === 1 ? 'still needs' : 'still need') + ' a companion.' : 'Every hour in the next 12 is covered.')
     : 'No vigils are active.';
   var num = function (b, label) { return '<div class="num"><b>' + b + '</b><span>' + label + '</span></div>'; };
-  return installBanner() + getAppCard() +
+  return installBanner() + getAppCard() + warn +
     '<h2 class="greet">' + greeting() + '.</h2><p class="sum">' + esc(sum) + '</p>' +
     '<div class="nums">' + num(active.length, active.length === 1 ? 'active vigil' : 'active vigils') + num(open12, 'open hours, next 12 h') +
       num(reachN() + (appOnly() ? '<small> of ' + ST.onCall + '</small>' : ''), appOnly() ? 'can get pages' : 'on call') + '</div>' +
     reachNote + modeNote + list + idle + needsYou() +
-    '<div class="more">' + req + '</div>' + endedHTML;
+    '<div class="more">' + req + '</div>' + endedHTML + tzNote();
 }
 // The coordinator's to-do list: letters asked for, and on-call volunteers whose pages can't reach them.
 function needsYou() {
   var chev = svg('chev', 'ico chev'), items = [];
   (ST.volunteers || []).forEach(function (v) {
-    if (letterOpen(v)) items.push('<button type="button" class="li" data-act="vol-open" data-id="' + esc(v.id) + '"><span class="av">' + esc(initials(v.name)) + '</span><span class="tx">' + esc(v.name) + ' asked for a service letter</span>' + chev + '</button>');
+    if (letterOpen(v) && !v.removed) items.push('<button type="button" class="li" data-act="vol-open" data-id="' + esc(v.id) + '"><span class="av">' + esc(initials(v.name)) + '</span><span class="tx">' + esc(v.name) + ' asked for a service letter</span>' + chev + '</button>');
   });
   if (appOnly()) {
-    var n = (ST.volunteers || []).filter(function (v) { return v.onCall && !v.devices; }).length;
+    var n = (ST.volunteers || []).filter(function (v) { return v.onCall && !v.removed && !v.devices; }).length;
     if (n) items.push('<button type="button" class="li" data-act="tab" data-tab="volunteers"><span class="av g">' + svg('bell') + '</span><span class="tx">' + plural(n, 'volunteer') + ' on call can’t get pages yet</span>' + chev + '</button>');
   }
+  // Version 2.9: the weekly phone check, the number nurses call, and the timer.
+  var wk = ST.weekly, miss = wk && wk.done ? (wk.miss || []).length : 0;
+  if (miss) items.push('<button type="button" class="li" data-act="tab" data-tab="volunteers"><span class="av g">' + svg('bell') + '</span><span class="tx">' + plural(miss, 'phone') + ' didn’t answer this week’s phone check: ' + esc(wk.miss.join(', ')) + '</span>' + chev + '</button>');
+  if (ST.health && !String(ST.backupPhone || '').trim()) items.push('<button type="button" class="li" data-act="tab" data-tab="links"><span class="av g">' + svg('bell') + '</span><span class="tx">Add a Backup phone on the Settings tab, so nurses have a number to call when a page reaches no one</span>' + chev + '</button>');
+  if (ST.health && !ST.tickAt) items.push('<button type="button" class="li" data-act="tab" data-tab="links"><span class="av g">' + svg('clock') + '</span><span class="tx">NODA’s 15-minute check hasn’t run yet. Check its timer in Apps Script</span>' + chev + '</button>');
   if (!items.length) return '';
   return '<h3 class="sec">Needs you</h3><div class="card list">' + items.join('') + '</div>';
 }
@@ -1168,43 +1281,70 @@ function covLine(d) {
   var start = reqStart(d), end = start + d.windowH * H;
   return 'Covers ' + dayWord(start) + ' ' + t24(start) + ' to ' + dayWord(end) + ' ' + t24(end) + ', ' + d.windowH + ' hours.';
 }
+// Version 2.9: start, length and check-in place in one line, with Change to open them.
+function reqSummary(d) {
+  var start = reqStart(d), end = start + d.windowH * H;
+  return (d.startIn ? 'Starts in ' + plural(d.startIn, 'hour') : 'Starts now') + ' and covers ' + d.windowH + ' hours, until ' + dayWord(end) + ' at ' + t12(end) +
+    '. Volunteers check in: ' + d.checkIn + '.';
+}
+function sendLabel(d) {
+  var u = unitName(d.unitId);
+  if (d.practice) return 'Send a practice page' + (u ? ' for ' + u : '');
+  return 'Page ' + plural(reachN(), 'volunteer') + (u ? ' for ' + u : '');
+}
+// A new ID for each request form, so a page sent twice after a lost answer makes one vigil (version 2.9).
+function newReqId() {
+  var c = 'abcdefghijklmnopqrstuvwxyz0123456789', out = '';
+  try { var b = new Uint8Array(20); window.crypto.getRandomValues(b); for (var i = 0; i < b.length; i++) out += c.charAt(b[i] % 36); }
+  catch (e) { for (var j = 0; j < 20; j++) out += c.charAt(Math.floor(Math.random() * 36)); }
+  return out;
+}
 function unitName(id) { for (var i = 0; i < ST.units.length; i++) if (ST.units[i].id === id) return ST.units[i].name; return ''; }
-// What volunteers' phones show, worded as the server words it (pageMsg_ in Code.gs).
+// What volunteers' phones show, worded as the server words it (pageMsg_ in Code.gs). Version 2.9: no PPE on the lock
+// screen (the app and the email say it), and a practice page says so first.
 function pagePreview(d) {
   var r = rules(), start = reqStart(d), soon = start <= Date.now() + 5 * MIN;
-  var body = 'A patient on ' + (unitName(d.unitId) || 'your unit') + ' needs a companion, ' + (soon ? 'starting now' : 'from ' + hmm(start)) + ', for the next ' + d.windowH +
-    ' hours. Sign up for ' + r.min + ' to ' + r.max + ' hours.' + (d.ppe ? ' PPE needed.' : '');
+  var body = (d.practice ? 'Practice only: no one needs to come in. ' : '') + 'A patient on ' + (unitName(d.unitId) || 'your unit') + ' needs a companion, ' + (soon ? 'starting now' : 'from ' + hmm(start)) + ', for the next ' + d.windowH +
+    ' hours. Sign up for ' + r.min + ' to ' + r.max + ' hours.';
   return '<div class="nh">' + (LOGO ? '<img src="' + esc(LOGO) + '" alt="">' : '') + 'NODA Alert<span>now</span></div>' +
-    '<p class="nt">NODA page</p><p class="nb">' + esc(body) + '</p>';
+    '<p class="nt">' + (d.practice ? 'NODA practice page' : 'NODA page') + '</p><p class="nb">' + esc(body) + '</p>';
 }
-// Where a charge nurse paged from last time (unit, check-in place, PPE), kept on this phone.
+// Where volunteers checked in last time this phone paged, kept on this phone (version 2.9: only that; the unit and PPE
+// are chosen each time).
 function rnLast() { try { var o = JSON.parse(LS.get('rnLast') || 'null'); return o && typeof o === 'object' ? o : null; } catch (e) { return null; } }
 function rnRequest() {
-  var d = DRAFT, L = ST.lists, ok = reqOK(d);
+  var d = DRAFT, L = ST.lists, ok = reqOK(d), coord = ST.role === 'coord';
   var unitSeg = ST.units.map(function (u) { return seg('unit', u.id, u.name, d.unitId); }).join('');
   var inSeg = L.checkIn.map(function (c) { return seg('checkIn', c, c, d.checkIn); }).join('');
+  // Version 2.9: start, length and check-in place rarely change, so they wait behind Change.
+  var when = UI.reqMore
+    ? '<div class="field"><span class="fl2" id="l-start">Start</span><div class="seg" role="radiogroup" aria-labelledby="l-start">' + seg('startIn', 0, 'Now', d.startIn) + seg('startIn', 1, 'In 1 hour', d.startIn) + seg('startIn', 2, 'In 2 hours', d.startIn) + '</div></div>' +
+      '<div class="field"><span class="fl2" id="l-win">Cover the next</span><div class="seg" role="radiogroup" aria-labelledby="l-win">' + [12, 24, 48, 72].map(function (h) { return seg('windowH', h, h + ' hours', d.windowH); }).join('') + '</div></div>' +
+      '<p class="hint" id="cov-sum">' + esc(covLine(d)) + '</p>' +
+      '<div class="field"><span class="fl2" id="l-checkin">Volunteers check in' + (d.remembered ? ' <span class="rem">· as last time</span>' : '') + '</span><div class="seg" role="radiogroup" aria-labelledby="l-checkin">' + inSeg + '</div></div>'
+    : '<div class="sumrow"><p class="hint m0" id="cov-sum">' + esc(reqSummary(d)) + '</p><button type="button" class="btn small" data-act="req-more" aria-label="Change the start, length or check-in place">Change</button></div>';
+  var dup = UI.dup
+    ? '<div class="confirm" id="dup-ask" role="alertdialog" aria-labelledby="dup-h" tabindex="-1"><p id="dup-h"><b>' + esc(UI.dup.msg) + '</b></p><p>Is this page for another patient?</p>' +
+      '<button type="button" class="btn primary block" data-act="dup-open" data-id="' + esc(UI.dup.id) + '">No: open ' + esc(UI.dup.id) + '</button>' +
+      '<button type="button" class="btn block" data-act="dup-second">Yes: page for a second patient</button></div>' : '';
   return '<div class="back-row"><button type="button" class="pillbtn back" data-act="home">' + svg('back') + 'Back</button></div>' +
-    '<p class="reach"><span class="rchip">' + (ST.role === 'coord' ? 'Coordinator' : 'Charge nurse') + '</span><span>' + esc(reachText()) + '</span></p>' +
+    '<p class="reach"><span class="rchip">' + (coord ? 'Coordinator' : 'Charge nurse') + '</span><span>' + esc(reachText()) + '</span></p>' +
     '<h2 class="h1">Request a NODA volunteer</h2>' +
     '<form id="req" class="form" novalidate>' +
       '<fieldset><legend class="fl">Patient meets at least one</legend>' + L.crit1.map(function (t, i) { return opt('crit1', i, t, d.crit1.indexOf(i) > -1); }).join('') + '</fieldset>' +
       '<fieldset><legend class="fl">And at least one</legend>' + L.crit2.map(function (t, i) { return opt('crit2', i, t, d.crit2.indexOf(i) > -1); }).join('') + '</fieldset>' +
       '<fieldset><legend class="fl">Permission</legend><label class="opt consent" for="f-consent"><input type="checkbox" id="f-consent" name="consent"' + (d.consent ? ' checked' : '') + '><span>The patient or surrogate agreed, or the attending provider approved (no surrogate).</span></label></fieldset>' +
-      '<fieldset><legend class="fl">Where' + (d.remembered ? ' <span class="rem">· remembered from last time</span>' : '') + '</legend>' +
+      '<fieldset><legend class="fl">Where</legend>' +
         '<div class="field"><span class="fl2" id="l-unit">Unit</span><div class="seg" role="radiogroup" aria-labelledby="l-unit">' + unitSeg + '</div></div>' +
-        '<div class="field"><span class="fl2" id="l-checkin">Volunteers check in</span><div class="seg" role="radiogroup" aria-labelledby="l-checkin">' + inSeg + '</div></div>' +
         '<div class="field"><span class="fl2" id="l-ppe">PPE at the bedside</span><div class="seg" role="radiogroup" aria-labelledby="l-ppe">' + seg('ppe', 'no', 'None', d.ppe ? 'yes' : 'no') + seg('ppe', 'yes', 'Needed', d.ppe ? 'yes' : 'no') + '</div></div>' +
       '</fieldset>' +
-      '<fieldset><legend class="fl">When</legend>' +
-        '<div class="field"><span class="fl2" id="l-start">Start</span><div class="seg" role="radiogroup" aria-labelledby="l-start">' + seg('startIn', 0, 'Now', d.startIn) + seg('startIn', 1, 'In 1 hour', d.startIn) + seg('startIn', 2, 'In 2 hours', d.startIn) + '</div></div>' +
-        '<div class="field"><span class="fl2" id="l-win">Cover the next</span><div class="seg" role="radiogroup" aria-labelledby="l-win">' + [12, 24, 48, 72].map(function (h) { return seg('windowH', h, h + ' hours', d.windowH); }).join('') + '</div></div>' +
-        '<p class="hint" id="cov-sum">' + esc(covLine(d)) + '</p>' +
-      '</fieldset>' +
+      '<fieldset><legend class="fl">When</legend>' + when + '</fieldset>' +
+      (coord && serverAtLeast('2.7.0') ? '<fieldset><legend class="fl">Practice</legend><label class="opt" for="f-practice"><input type="checkbox" id="f-practice" name="practice"' + (d.practice ? ' checked' : '') + '><span>Practice page. Volunteers are told no one needs to come in.</span></label></fieldset>' : '') +
       '<fieldset><legend class="fl">Volunteers will see</legend><div class="nprev" id="req-prev">' + pagePreview(d) + '</div>' +
         '<p class="hint">The page has no patient details. Share those in person at check-in.</p></fieldset>' +
-      '<div class="foot"><button type="submit" class="btn primary big block" id="send"' + (ok ? '' : ' disabled') + '>Page ' + plural(reachN(), 'on-call volunteer') + '</button>' +
+      '<div class="foot">' + (dup || '<button type="submit" class="btn primary big block" id="send"' + (ok ? '' : ' disabled') + '>' + esc(sendLabel(d)) + '</button>' +
         '<p class="hint" id="why"' + (ok ? ' hidden' : '') + '>' + esc(reqWhy(d)) + '</p>' +
-        '<p class="fine" id="fine"' + (ok ? '' : ' hidden') + '>' + svg('lock') + 'No patient details are sent.</p></div>' +
+        '<p class="fine" id="fine"' + (ok ? '' : ' hidden') + '>' + svg('lock') + 'No patient details are sent.</p>') + '</div>' +
     '</form>';
 }
 function readForm(f) {
@@ -1214,20 +1354,44 @@ function readForm(f) {
   DRAFT.consent = f.querySelector('#f-consent').checked;
   DRAFT.unitId = radio('unit', DRAFT.unitId);
   DRAFT.checkIn = radio('checkIn', DRAFT.checkIn);
-  DRAFT.ppe = radio('ppe', 'no') === 'yes';
-  DRAFT.startIn = +radio('startIn', 0); DRAFT.windowH = +radio('windowH', 24);
+  DRAFT.ppe = radio('ppe', DRAFT.ppe ? 'yes' : 'no') === 'yes';
+  // Fields behind Change keep their values while it's closed.
+  DRAFT.startIn = +radio('startIn', DRAFT.startIn); DRAFT.windowH = +radio('windowH', DRAFT.windowH);
+  var pr = f.querySelector('#f-practice'); if (pr) DRAFT.practice = pr.checked;
 }
 function updateReq() {
   var f = document.getElementById('req'); if (!f) return;
   readForm(f);
-  var ok = reqOK(DRAFT);
-  document.getElementById('cov-sum').textContent = covLine(DRAFT);
+  var ok = reqOK(DRAFT), send = document.getElementById('send');
+  document.getElementById('cov-sum').textContent = UI.reqMore ? covLine(DRAFT) : reqSummary(DRAFT);
   document.getElementById('req-prev').innerHTML = pagePreview(DRAFT);
-  document.getElementById('send').disabled = !ok;
-  document.getElementById('why').hidden = ok;
-  document.getElementById('why').textContent = reqWhy(DRAFT);
-  document.getElementById('fine').hidden = !ok;
+  if (send) {
+    send.disabled = !ok; send.textContent = sendLabel(DRAFT);
+    document.getElementById('why').hidden = ok;
+    document.getElementById('why').textContent = reqWhy(DRAFT);
+    document.getElementById('fine').hidden = !ok;
+  }
   fitScrollPad();
+}
+// Sends the page. The button says "Sending page…" until the server answers (a page can take several seconds). A unit
+// that already has an active vigil gets a question instead: open that vigil, or page for a second patient.
+function sendRequest() {
+  if (BUSY || !DRAFT) return;
+  var b = document.getElementById('send');
+  if (b) { b.disabled = true; b.textContent = DRAFT.practice ? 'Sending practice page…' : 'Sending page…'; b.classList.add('pending'); b.setAttribute('aria-busy', 'true'); }
+  var sent = DRAFT;
+  act('requestVigil', [DRAFT], function (st) {
+    LS.set('rnLast', JSON.stringify({ checkIn: sent.checkIn }));
+    DRAFT = null; VIEW = { name: 'vigil', id: st.lastCreated }; UI = {}; window.scrollTo(0, 0);
+    // Version 2.8: phones confirm within seconds; show the count without a reload.
+    [20000, 60000].forEach(function (ms) { setTimeout(function () { if (VIEW.name === 'vigil' && VIEW.id === st.lastCreated && autoRefreshOK()) load(); }, ms); });
+  }, function (m) {
+    var dup = /already has an active NODA vigil \((V-\d+)/.exec(m);
+    if (dup && DRAFT && !DRAFT.second) {
+      UI.dup = { id: dup[1], msg: m.split(' If this is another patient')[0] };
+      setTimeout(function () { var c = document.getElementById('dup-ask'); if (c) { try { c.focus(); c.scrollIntoView({ block: 'nearest' }); } catch (e) { /* no focus */ } } }, 0);
+    } else toast(m);
+  });
 }
 // One row of the coverage list: a volunteer's sign-up, or a stretch of open hours.
 function segChip(g) {
@@ -1238,6 +1402,7 @@ function segChip(g) {
       case 'done': return '<span class="chip done">Covered · ' + n + '</span>';
       case 'bedside': return '<span class="chip bedside">At bedside · ' + n + '</span>';
       case 'due': return '<span class="chip taken">Due now · ' + n + '</span>';
+      case 'late': return '<span class="chip late">Not checked in · ' + n + '</span>';
       case 'taken': return '<span class="chip taken">' + n + h + '</span>';
     }
   }
@@ -1249,16 +1414,68 @@ function segChip(g) {
   }
   return '';
 }
-// Version 2.8: how many volunteers' phones confirmed the latest page, and how to hear about sign-ups.
+// Version 2.8: how many volunteers' phones showed the latest page, and how to hear about sign-ups. Version 2.9:
+// "delivered" (a phone showed it; that doesn't mean someone saw it) and how many people opened it.
 function reachLine(v) {
   if (v.status !== 'active') return '';
   var out = '';
   if (v.reach && v.reach.sent) {
     var r = v.reach, fresh = Date.now() - r.at < 10 * MIN;
-    out += '<p class="reachline">' + svg('bell') + '<span>' + (r.kind === 'repage' ? 'Re-page' : 'Page') + ' confirmed on <b>' + r.confirmed + ' of ' + r.sent + '</b> volunteers’ phones' + (fresh ? ' so far' : '') + '.</span></p>';
+    out += '<p class="reachline">' + svg('bell') + '<span>' + (r.kind === 'repage' ? 'Re-page' : r.kind === 'gap' ? 'Latest alert' : 'Page') + ' delivered to <b>' + r.confirmed + ' of ' + r.sent + '</b> volunteers’ phones' + (fresh ? ' so far' : '') +
+      (r.opened !== undefined ? '. ' + (r.opened ? plural(r.opened, 'volunteer') + ' opened it' : 'No one has opened it yet') : '') + '.</span></p>';
+  } else if (ST.push && v.phones !== null && v.phones !== undefined && v.phones > 0) {
+    out += '<p class="reachline">' + svg('bell') + '<span>The page reached <b>' + plural(v.phones, 'volunteer’s phone', 'volunteers’ phones') + '</b>.</span></p>';
   }
   if (ST.role === 'rn' && pushState() === 'off') out += '<p class="hint">To hear when a volunteer signs up, turn on notifications under This phone on the home screen.</p>';
   return out;
+}
+// Version 2.9: the number to call when a page doesn't reach anyone (Backup phone, on the Settings tab of the Sheet).
+function callLine() {
+  var p = String((ST && ST.backupPhone) || '').trim(), tel = p.replace(/[^\d+]/g, '');
+  var link = tel.length >= 3 ? '<a class="tel" href="tel:' + esc(tel) + '">' + esc(p) + '</a>' : '';
+  if (ST.role === 'coord') return link ? 'Nurses are told to call ' + link + '.' : 'Nurses are told to call the NODA coordinator. Add a Backup phone on the Settings tab to give them a number.';
+  return link ? 'Call ' + link + ' to find a volunteer.' : 'Call the NODA coordinator to find a volunteer.';
+}
+// True when app notifications are on and the first page reached no volunteer's phone, and no later page did either.
+function noPhones(v) { return v.status === 'active' && !!ST.push && v.phones === 0 && !(v.reach && v.reach.sent) && !signupsOf(v).length; }
+// Version 2.9: the nurse's warning when a page reached no phone, few phones after 5 minutes, or no one has signed up
+// after 15 minutes, with the number to call.
+function pageWarn(v, now) {
+  if (v.status !== 'active' || signupsOf(v).length) return '';
+  if (noPhones(v)) return '<div class="alert" role="alert"><p><b>The page reached no volunteer’s phone.</b> ' + callLine() + '</p></div>';
+  var r = v.reach, low = r && r.sent && now - r.at >= 5 * MIN && r.confirmed * 2 < r.sent, waited = now - v.created >= 15 * MIN;
+  if (!low && !waited) return '';
+  return '<div class="alert amber" role="status"><p><b>' + (waited ? 'No volunteer has signed up yet.' : 'Only ' + r.confirmed + ' of ' + r.sent + ' volunteers’ phones have the page.') + '</b> ' + callLine() + '</p></div>';
+}
+// Version 2.9: the 15-minute check (reminders, repeat alerts, "no volunteer yet") hasn't run for more than 35 minutes.
+function staleBanner(now) {
+  if (!ST || !ST.tickAt || now - ST.tickAt <= 35 * MIN) return '';
+  return '<div class="alert" role="alert"><p><b>NODA’s 15-minute check last ran ' + esc(dayWord(ST.tickAt) + ' at ' + t12(ST.tickAt)) + '.</b> Reminders and repeat alerts are stopped until it runs again.</p>' +
+    '<p>' + (ST.role === 'coord' ? 'Open the Apps Script project and check its timer under Triggers.' : callLine()) + '</p></div>';
+}
+// Version 2.9: a volunteer who hasn't checked in: the nurse says whether they're at the bedside.
+function latePanel(v, now) {
+  if (!serverAtLeast('2.7.0')) return '';
+  return lateOf(v, now).map(function (x) {
+    var due = dueOf(x), open = now >= due + LATE_OPEN, first = firstName(x.volName);
+    return '<div class="card latecard" role="group" aria-labelledby="late-' + esc(x.id) + '"><p class="h" id="late-' + esc(x.id) + '">' + esc(x.volName) + ' hasn’t checked in.</p>' +
+      '<p class="sub m0">Due at ' + esc(t12(due)) + '. ' + (open ? 'Their hours are open to other volunteers again.' : 'At ' + esc(t12(due + LATE_OPEN)) + ' their hours open to other volunteers.') + ' Is ' + esc(first) + ' at the bedside?</p>' +
+      '<div class="btns2"><button type="button" class="btn primary" data-act="here" data-id="' + esc(x.id) + '">Yes, check ' + esc(first) + ' in</button>' +
+      '<button type="button" class="btn" data-act="nothere" data-id="' + esc(x.id) + '">No, open the hours</button></div></div>';
+  }).join('');
+}
+// Version 2.9: who gets this vigil's notices (sign-ups, "no volunteer yet", late volunteers), and a way to take them
+// over at shift change.
+function handoff(v) {
+  if (v.status !== 'active' || v.nurseName === undefined) return '';
+  if (v.mine) return '<p class="hint">This vigil’s notices come to you.</p>';
+  var who = v.nurseName ? 'This vigil’s notices go to ' + esc(v.nurseName) + '.' : 'No charge nurse gets this vigil’s notices.';
+  var btn = ST.role === 'rn' && ST.name ? '<button type="button" class="btn small" data-act="take-updates" data-id="' + esc(v.id) + '">Send them to me</button>' : '';
+  return '<div class="note row"><span>' + who + '</span>' + btn + '</div>';
+}
+// An end can be undone for 15 minutes (server 2.7).
+function canUndo(v, now) {
+  return v.status !== 'active' && !!v.ended && now - v.ended < 15 * MIN && serverAtLeast('2.7.0') && v.reason !== 'Schedule ran out' && !(v.practice && ST.role !== 'coord');
 }
 function rnVigil(v) {
   var now = Date.now(), s = stats(v, now), rows = '', last = '';
@@ -1267,33 +1484,41 @@ function rnVigil(v) {
     if (dl !== last) { rows += '<li class="dayhead">' + esc(dl) + '</li>'; last = dl; }
     rows += '<li class="slot rn"><span class="t24">' + r24(g.start, g.end) + '</span>' + segChip(g) + '</li>';
   });
-  var booked = {}; signupsOf(v).forEach(function (x) { if (x.start >= now) booked[x.vol] = 1; });
+  // Who the server tells when the vigil ends: everyone booked who hasn't arrived (version 2.7).
+  var booked = {}; signupsOf(v).forEach(function (x) { if (!x.inAt && x.end > now) booked[x.vol] = 1; });
   var np = Object.keys(booked).length;
-  var status = v.status === 'active'
+  var status = (v.status === 'active'
     ? '<span class="chip taken">Active since ' + t24(v.created) + '</span>'
-    : '<span class="chip done">Ended ' + t24(v.ended) + ' · ' + esc(v.reason) + '</span>';
+    : '<span class="chip done">Ended ' + t24(v.ended) + (v.reason ? ' · ' + esc(v.reason) : '') + '</span>') +
+    (v.practice ? ' <span class="chip practice">Practice</span>' : '');
   var actions = '';
   if (v.status === 'active') {
     if (UI.endAsk === v.id) {
-      actions = '<div class="card endpanel"><p class="h">End this vigil?</p><fieldset><legend class="fl">Reason</legend>' +
+      actions = '<div class="card endpanel"><p class="h">End this vigil?</p>' +
+        '<p class="hint m0">' + esc(v.unitName + ' · ' + v.id + ', paged ' + dayWord(v.created) + ' at ' + t12(v.created)) + '.</p><fieldset><legend class="fl">Reason</legend>' +
         ST.lists.reasons.map(function (r, i) { var id = 'f-reason-' + i; return '<label class="opt" for="' + id + '"><input type="radio" id="' + id + '" name="reason" value="' + esc(r) + '"' + (UI.reason === r ? ' checked' : '') + '><span>' + esc(r) + '</span></label>'; }).join('') +
-        '</fieldset><p class="hint m0">' + (np ? plural(np, 'booked volunteer') + ' will be told their hours are canceled.' : 'No one is signed up for later hours.') + '</p>' +
+        '</fieldset><p class="hint m0">' + (np ? plural(np, 'booked volunteer') + ' will be told their hours are canceled.' : 'No booked volunteer needs to be told.') + '</p>' +
         '<div class="row"><button type="button" class="btn danger" data-act="end" data-id="' + esc(v.id) + '"' + (UI.reason ? '' : ' disabled') + '>End vigil' + (np ? ' and notify' : '') + '</button><button type="button" class="btn" data-act="end-cancel">Keep it open</button></div></div>';
     } else {
       actions = '<div class="stack"><button type="button" class="btn outline block" data-act="repage" data-id="' + esc(v.id) + '"' + (s.open ? '' : ' disabled') + '>Re-page for ' + plural(s.open, 'open hour') + '</button>' +
         '<div class="btns2"><button type="button" class="btn" data-act="extend" data-id="' + esc(v.id) + '">Add 12 hours</button>' +
         '<button type="button" class="btn danger" data-act="end-ask" data-id="' + esc(v.id) + '">End vigil</button></div></div>';
     }
+  } else if (canUndo(v, now)) {
+    actions = '<div class="stack"><button type="button" class="btn outline block" data-act="reopen" data-id="' + esc(v.id) + '">Undo: reopen this vigil</button>' +
+      '<p class="hint m0">Ended by mistake? You can reopen it until ' + esc(t12(v.ended + 15 * MIN)) + '. Booked volunteers are told their shift is back on.</p></div>';
   }
+  var ext = v.status === 'active' && v.autoExt ? '<p class="note">No one ended this vigil when its hours ran out, so NODA added 12 hours' + (v.autoExt > 1 ? ' (' + v.autoExt + ' times in a row)' : '') + '. End it when it’s no longer needed.</p>' : '';
   return '<div class="back-row"><button type="button" class="pillbtn back" data-act="home">' + svg('back') + 'Back</button></div>' +
     '<p class="crumb">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p><h2 class="h1">Coverage</h2>' +
+    staleBanner(now) + pageWarn(v, now) + latePanel(v, now) +
     '<div class="stack"><div>' + status + '</div>' +
     '<div class="stats"><div><b>' + s.filled + '/' + s.total + '</b><span>hours filled</span></div><div><b>' + (s.gap ? (s.gap.start <= now ? 'Now' : t24(s.gap.start)) : 'None') + '</b><span>next gap</span></div><div><b>' + v.paged + '</b><span>paged</span></div></div>' +
-    reachLine(v) +
+    reachLine(v) + handoff(v) + ext +
     '<div class="card">' + ribbon(v, s, now) + '</div>' +
     actions + '</div>' +
     '<h3 class="sec">Hours</h3><ul class="slots">' + rows + '</ul>' +
-    '<p class="hint">Volunteers arrive 5–10 minutes early and check in ' + esc(where(v)) + '.</p>';
+    '<p class="hint">Volunteers arrive 5–10 minutes early and check in ' + esc(where(v)) + '.</p>' + tzNote();
 }
 
 /* ---------- volunteer ---------- */
@@ -1312,10 +1537,24 @@ function myShifts(now) {
   });
   return out.sort(function (a, b) { return a.s.start - b.s.start; });
 }
+// Version 2.9: a shift on a vigil that ended before this volunteer arrived, until its hours have passed, so nobody
+// travels in for a vigil that's over.
+function canceledShifts(now) {
+  var out = [];
+  ST.vigils.forEach(function (v) {
+    if (v.status === 'active' || !v.ended) return;
+    signupsOf(v).forEach(function (s) { if (s.vol === ST.me.id && !s.inAt && s.end > v.ended && s.end > now) out.push({ v: v, s: s }); });
+  });
+  return out.sort(function (a, b) { return a.s.start - b.s.start; });
+}
+function canceledCard(x) {
+  return '<section class="card gone" role="status"><p class="lab2">Shift canceled</p><h3 class="ct">The ' + (x.v.practice ? 'practice ' : '') + 'vigil on ' + esc(x.v.unitName) + ' has ended.</h3>' +
+    '<p class="sub">Your shift ' + esc(dayWord(x.s.start) + ', ' + span12(x.s.start, x.s.end)) + ', is canceled. Please don’t come in. Thank you for being ready.</p></section>';
+}
 function volHome() {
   var now = Date.now();
   var needs = ST.vigils.filter(function (v) { return v.status === 'active' && stats(v, now).open > 0; }).reverse();
-  var mine = myShifts(now);
+  var mine = myShifts(now), gone = canceledShifts(now);
   var on = pushState() === 'on';
   var by = appOnly()
     ? (on ? 'Pages come to this phone.' : ST.me.devices ? 'Pages go to the phone where you turned on notifications.'
@@ -1334,18 +1573,27 @@ function volHome() {
   var pause = UI.confirmPause
     ? '<div class="confirm" id="pause-ask"><p>Pause NODA pages? You won’t get pages or “no one yet” alerts until you turn this back on.</p>' +
       '<div class="row"><button type="button" class="btn danger" data-act="pause-yes">Pause pages</button><button type="button" class="btn" data-act="pause-no">Keep getting pages</button></div></div>' : '';
+  // Version 2.9: repeat alerts between 10 PM and 7 AM go only to volunteers who choose them.
+  var night = ST.me.onCall && ST.me.nightPages !== undefined && serverAtLeast('2.7.0')
+    ? '<label class="card toggle" for="f-night"><span class="tx"><b>Night pages</b><small>' +
+        (ST.me.nightPages ? 'On. Repeat alerts for open hours can come between 10 PM and 7 AM.' : 'Off. A new page or a nurse’s re-page can still come at night; automatic repeat alerts wait until 7 AM.') +
+      '</small></span><input type="checkbox" id="f-night" role="switch"' + (ST.me.nightPages ? ' checked' : '') + '></label>' : '';
+  // Version 2.9: what needs this volunteer comes first (a canceled shift, a shift to check in for, patients who need
+  // company), so the main button is on the first screen even with large text. A calm screen starts with a greeting.
+  var lead = gone.length || urgent || needs.length;
   return installBanner() + getAppCard() +
-    '<h2 class="greet">' + greeting() + (first ? ', ' + esc(first) : '') + '.</h2>' +
+    (lead ? '<h2 class="vh">NODA Alert</h2>' : '<h2 class="greet">' + greeting() + (first ? ', ' + esc(first) : '') + '.</h2>') +
+    gone.map(canceledCard).join('') +
     (urgent ? nextShift(mine[0], mine.length, now) : '') +
+    needs.map(function (v) { return needCard(v, now); }).join('') +
     (first1 ? '<div class="card-gap">' + notif + '</div>' : '') +
     '<label class="card toggle" for="f-avail"><span class="tx"><b>Available for NODA pages</b><small>' +
       (ST.me.onCall ? by : 'Paused. You won’t get alerts.') +
-    '</small></span><input type="checkbox" id="f-avail" role="switch"' + (ST.me.onCall ? ' checked' : '') + '></label>' + pause +
+    '</small></span><input type="checkbox" id="f-avail" role="switch"' + (ST.me.onCall ? ' checked' : '') + '></label>' + pause + night +
     peNote + (notif && !first1 ? '<div class="card-gap">' + notif + '</div>' : '') +
     newPhoneCard() +
-    (needs.length ? needs.map(function (v) { return needCard(v, now); }).join('')
-      : '<div class="card calm"><h3 class="ct">Every hour is covered right now.</h3><p class="sub">Thank you. When a patient needs company, it shows here.</p></div>') +
-    (mine.length && !urgent ? nextShift(mine[0], mine.length, now) : '') +
+    (needs.length ? '' : '<div class="card calm"><h3 class="ct">Every hour is covered right now.</h3><p class="sub">Thank you. When a patient needs company, it shows here.</p></div>') +
+    (mine.length && !urgent ? nextShift(mine[0], mine.length, now) : '') + tzNote() +
     (MODE === 'pwa' ? deviceCard(notifLater) : '<p class="hint">Add this page to your home screen so it’s one tap away.</p>');
 }
 // True while a shift can be checked in (from 10 minutes before) or is under way.
@@ -1382,11 +1630,16 @@ function bestOption(opts) {
   var o = opts[0], L = o.lens, h = L.indexOf(2) >= 0 ? 2 : L[L.length - 1] < 2 ? L[L.length - 1] : L[0];
   return { t: o.t, h: h };
 }
-function sitLabel(t, h, now) { var end = t + h * H; return t <= now ? 'Sit now, until ' + t12(end) : 'Sit ' + r12(t, end) + ' ' + dayWord(t); }
+function sitLabel(t, h, now) {
+  var end = t + h * H;
+  if (t <= now) return 'Sit now, ' + until12(end, now);
+  return endsOtherDay(t, end) ? 'Sit ' + dayWord(t) + ' ' + t12(t) + ' to ' + t12(end) + ' ' + dayWord(end) : 'Sit ' + r12(t, end) + ' ' + dayWord(t);
+}
 function needCard(v, now) {
   var s = stats(v, now), best = bestOption(signupOptions(v, now));
   var next = !s.gap ? '' : s.gap.start <= now ? ' Someone is needed now.' : ' The next open time is ' + dayWord(s.gap.start) + ' at ' + t12(s.gap.start) + '.';
   return '<section class="card need">' +
+    (v.practice ? '<p class="lab2"><span class="chip practice">Practice</span> No one needs to come in.</p>' : '') +
     '<h3 class="ct">A patient on ' + esc(v.unitName) + ' needs company.</h3>' +
     '<p class="sub">' + (s.open === 1 ? '1 hour is still open.' : s.open + ' hours are still open.') + next + '</p>' +
     ribbon(v, s, now) +
@@ -1395,22 +1648,30 @@ function needCard(v, now) {
       : '<button type="button" class="btn outline block" data-act="open" data-id="' + esc(v.id) + '">See the hours</button>') +
   '</section>';
 }
-// One shift: when, where, and Check in / Check out / I can't make it.
+// One shift: when, where, and Check in / Check out / I can't make it. Version 2.9: Check out asks first (it sits where
+// Check in was, so a second tap can't end a shift), and a late volunteer is told where things stand.
 function shiftBody(v, s, now) {
   var early = rules().early * MIN, inNow = s.inAt && !s.outAt, canIn = !s.inAt && now >= s.start - early && now < s.end, acts;
+  var late = isLate(s, now), due = dueOf(s), reopened = late && now >= due + LATE_OPEN;
   if (UI.confirmRelease === s.id) {
     acts = '<div class="confirm"><p>Can’t make it? NODA lets the other volunteers know, so someone can sign up.</p><button type="button" class="btn danger block" data-act="release" data-id="' + esc(s.id) + '">Give up this shift</button><button type="button" class="btn block" data-act="keep">Keep my shift</button></div>';
+  } else if (UI.confirmOut === s.id) {
+    acts = '<div class="confirm" id="out-ask" tabindex="-1"><p>Check out now? NODA logs your hours.' + (s.end - now > 5 * MIN ? ' Your hours until ' + esc(t12(s.end)) + ' open to other volunteers, and the charge nurse is told.' : '') + '</p>' +
+      '<button type="button" class="btn danger block" data-act="checkout" data-id="' + esc(s.id) + '">Yes, check out</button><button type="button" class="btn block" data-act="keep">Not yet</button></div>';
   } else {
-    acts = (inNow ? '<button type="button" class="btn primary big block" data-act="checkout" data-id="' + esc(s.id) + '">Check out</button>'
-        : canIn ? '<button type="button" class="btn primary big block" data-act="checkin" data-id="' + esc(s.id) + '">Check in</button>' : '') +
+    acts = (canIn ? '<button type="button" class="btn primary big block" data-act="checkin" data-id="' + esc(s.id) + '">Check in</button>' : '') +
       (inNow ? '' : '<button type="button" class="btn outline block" data-act="release-ask" data-id="' + esc(s.id) + '">I can’t make it</button>');
   }
   var info = inNow ? esc(v.unitName) + '. You’re checked in. Check out when you leave.'
+    : reopened ? esc(v.unitName) + '. You were due at ' + esc(t12(due)) + ', so your hours are open to other volunteers again. If you’re here, check in ' + esc(where(v)) + ' now.'
+    : late ? esc(v.unitName) + '. You were due at ' + esc(t12(due)) + '. Check in ' + esc(where(v)) + ' when you arrive. Can’t make it? Tap I can’t make it, so another volunteer can come.'
     : esc(v.unitName) + '. Check in ' + esc(where(v)) + (canIn ? ' now.' : ' from ' + t12(s.start - early) + '.');
-  var when = '<p class="big">' + esc(dayLabel(s.start) + ', ' + r12(s.start, s.end)) + '</p>' + (inNow ? '<p><span class="chip bedside">At bedside</span></p>' : '');
+  var when = '<p class="big">' + esc(dayLabel(s.start) + ', ' + span12(s.start, s.end)) + '</p>' +
+    (v.practice ? '<p><span class="chip practice">Practice</span></p>' : '') +
+    (inNow ? '<p><span class="chip bedside">At bedside</span></p>' : late ? '<p><span class="chip late">Not checked in</span></p>' : '');
   // Version 2.8: while Check in or Check out is open, that button comes right under the time, before the details.
-  if (UI.confirmRelease === s.id || !(inNow || canIn)) return when + '<p>' + info + '</p>' + acts;
-  return when + '<button type="button" class="btn primary big block" data-act="' + (inNow ? 'checkout' : 'checkin') + '" data-id="' + esc(s.id) + '">' + (inNow ? 'Check out' : 'Check in') + '</button>' +
+  if (UI.confirmRelease === s.id || UI.confirmOut === s.id || !(inNow || canIn)) return when + '<p>' + info + '</p>' + acts;
+  return when + '<button type="button" class="btn primary big block" data-act="' + (inNow ? 'checkout-ask' : 'checkin') + '" data-id="' + esc(s.id) + '">' + (inNow ? 'Check out' : 'Check in') + '</button>' +
     '<p class="after-main">' + info + '</p>' + (inNow ? '' : '<button type="button" class="btn outline block" data-act="release-ask" data-id="' + esc(s.id) + '">I can’t make it</button>');
 }
 function nextShift(x, count, now) {
@@ -1419,7 +1680,7 @@ function nextShift(x, count, now) {
 }
 function volShifts() {
   var now = Date.now(), mine = myShifts(now);
-  return '<div class="head"><h2>My shifts</h2></div>' +
+  return '<div class="head"><h2>My shifts</h2></div>' + canceledShifts(now).map(canceledCard).join('') +
     (mine.length ? mine.map(function (x) { return '<section class="card shift">' + shiftBody(x.v, x.s, now) + '</section>'; }).join('')
       : '<p class="empty">No upcoming shifts. When a patient needs company, you can sign up on Vigils.</p>') +
     '<p class="hint">Check in when you arrive and check out when you leave, so your hours count.</p>';
@@ -1492,6 +1753,21 @@ function signupOptions(v, now) {
   });
   return opts;
 }
+function cap(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
+// Version 2.9: start times under a heading for each day, the first 12 hours first ("More times" shows the rest), so a
+// long vigil doesn't show "9:30 PM" three times with no day.
+function startTimes(list, cur, now) {
+  var limit = list[0].t + 12 * H, shown = UI.allTimes ? list : list.filter(function (o) { return o.t < limit || o.t === cur.t; });
+  var html = '', day = '';
+  shown.forEach(function (o) {
+    var dl = dayLabel(o.t);
+    if (dl !== day) { html += (day ? '</div>' : '') + '<p class="startday" aria-hidden="true">' + esc(dl) + '</p><div class="starts" role="group" aria-label="Start time, ' + esc(dayWord(o.t)) + '">'; day = dl; }
+    html += '<button type="button" class="pill" data-act="pick-start" data-t="' + o.t + '" aria-pressed="' + (o.t === cur.t) + '">' + esc(o.t <= now ? 'Now' : t12(o.t)) + '</button>';
+  });
+  html += '</div>';
+  var more = list.length - shown.length;
+  return '<div class="startlist">' + html + (more > 0 ? '<button type="button" class="btn quiet block" data-act="more-times">More start times (' + more + ')</button>' : '') + '</div>';
+}
 // Two questions (when can you come, how long can you stay), then a box to check and confirm.
 function signupQuestions(v, opts, now) {
   var r = rules(), cur = null;
@@ -1504,25 +1780,24 @@ function signupQuestions(v, opts, now) {
   opts.forEach(function (o) { var g = groups[groups.length - 1]; if (!g || g.run !== o.run) groups.push(g = { run: o.run, opts: [] }); g.opts.push(o); });
   var q1 = groups.map(function (g) {
     var on = g.run === cur.run;
-    var range = g.run.start <= now ? 'Until ' + t12(g.run.end) : r12(g.run.start, g.run.end);
-    var starts = on && g.opts.length > 1 ? '<div class="starts" role="group" aria-label="Start time">' + g.opts.map(function (o) {
-      return '<button type="button" class="pill" data-act="pick-start" data-t="' + o.t + '" aria-pressed="' + (o.t === cur.t) + '">' + esc(o.t <= now ? 'Now' : t12(o.t)) + '</button>';
-    }).join('') + '</div>' : '';
+    var range = g.run.start <= now ? cap(until12(g.run.end, now)) : span12(g.run.start, g.run.end);
     return '<div class="part' + (on ? ' on' : '') + '"><button type="button" class="part-btn" data-act="pick-start" data-t="' + g.opts[0].t + '" aria-pressed="' + on + '">' +
-      '<b>' + esc(partLabel(g.run.start, now)) + '</b><span>' + esc(range + ' · ' + plural(g.run.hours, 'hour') + ' open') + '</span></button>' + starts + '</div>';
+      '<b>' + esc(partLabel(g.run.start, now)) + '</b><span>' + esc(range + ' · ' + plural(g.run.hours, 'hour') + ' open') + '</span></button>' + (on && g.opts.length > 1 ? startTimes(g.opts, cur, now) : '') + '</div>';
   }).join('');
   var q2 = cur.lens.map(function (k) {
-    return '<button type="button" class="len" data-act="pick-hours" data-h="' + k + '" aria-pressed="' + (k === h) + '"><b>' + plural(k, 'hour') + '</b><span>until ' + t12(cur.t + k * H) + '</span></button>';
+    var e = cur.t + k * H;
+    return '<button type="button" class="len" data-act="pick-hours" data-h="' + k + '" aria-pressed="' + (k === h) + '"><b>' + plural(k, 'hour') + '</b><span>until ' + esc(t12(e) + (endsOtherDay(cur.t, e) ? ' ' + dayWord(e) : '')) + '</span></button>';
   }).join('');
   var end = cur.t + h * H, before = Math.round((cur.t - cur.run.start) / H), after = Math.round((cur.run.end - end) / H), left = [];
   if (before > 0 && before < r.min) left.push(plural(before, 'open hour') + ' before you');
   if (after > 0 && after < r.min) left.push(plural(after, 'open hour') + ' after you');
-  var opens = cur.t - r.early * MIN;
-  var when = cur.t <= now ? 'now until ' + t12(end) : dayWord(cur.t) + ' from ' + fromTo(cur.t, end);
-  var label = cur.t <= now ? 'now until ' + t12(end) : dayWord(cur.t) + ' ' + r12(cur.t, end);
+  var opens = cur.t - r.early * MIN, cross = endsOtherDay(cur.t, end);
+  var when = cur.t <= now ? 'now ' + until12(end, now) : cross ? dayWord(cur.t) + ' from ' + t12(cur.t) + ' to ' + t12(end) + ' ' + dayWord(end) : dayWord(cur.t) + ' from ' + fromTo(cur.t, end);
+  var label = cur.t <= now ? 'now ' + until12(end, now) : cross ? dayWord(cur.t) + ' ' + t12(cur.t) + ' to ' + t12(end) + ' ' + dayWord(end) : dayWord(cur.t) + ' ' + r12(cur.t, end);
   return '<h3 class="q"><span aria-hidden="true">1</span>When can you come?</h3>' + q1 +
     '<h3 class="q"><span aria-hidden="true">2</span>How long can you stay?</h3><div class="lens" role="group" aria-label="How long">' + q2 + '</div>' +
     '<section class="conf" id="confirm" tabindex="-1" aria-labelledby="conf-h"><p class="lab2">Check and confirm</p>' +
+      (v.practice ? '<p class="note">Practice page: no one needs to come in.</p>' : '') +
       '<h3 class="ct" id="conf-h">You’ll sit ' + esc(when) + '.</h3>' +
       '<ul class="facts2">' +
         '<li>' + svg('pin') + '<span>Check in ' + esc(where(v)) + '.</span></li>' +
@@ -1542,9 +1817,9 @@ function watchList(v, now) {
     if (g.st === 'done' || g.st === 'missed' || g.st === 'cancelled') return;
     var dl = dayLabel(g.start);
     if (dl !== last) { rows += '<li class="day">' + esc(dl) + '</li>'; last = dl; }
-    var range = r12(g.start, g.end), cls, av, txt;
+    var range = span12(g.start, g.end), cls, av, txt;
     if (g.s && g.s.vol === ST.me.id) { cls = 'you'; av = '<span class="av y">' + esc(initials(ST.me.name)) + '</span>'; txt = 'You'; }
-    else if (g.s) { cls = 'cv'; av = '<span class="av' + (g.st === 'bedside' ? ' now' : '') + '">' + esc(initials(g.s.volName)) + '</span>'; txt = esc(g.s.volName) + (g.st === 'bedside' ? ', with the patient now' : ''); }
+    else if (g.s) { cls = 'cv'; av = '<span class="av' + (g.st === 'bedside' ? ' now' : '') + '">' + esc(initials(g.s.volName)) + '</span>'; txt = esc(g.s.volName) + (g.st === 'bedside' ? ', with the patient now' : g.st === 'late' ? ', not checked in yet' : ''); }
     else { cls = 'op'; av = '<span class="av o" aria-hidden="true"></span>'; txt = (g.st === 'opennow' ? 'Open now' : 'Open') + ' · ' + plural(g.hours, 'hour'); }
     rows += '<li class="blk ' + cls + '">' + av + '<span class="tx"><b>' + esc(range) + '</b><span>' + txt + '</span></span></li>';
   });
@@ -1554,20 +1829,23 @@ function volVigil(v) {
   var now = Date.now();
   var back = '<div class="back-row"><button type="button" class="pillbtn back" data-act="home">' + svg('back') + 'Back</button></div>';
   if (v.status !== 'active') {
-    return back + '<p class="crumb">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p><h2 class="h1">This vigil has ended</h2><p class="empty">Thank you for being part of it. Your coordinator will be in touch.</p>';
+    // Version 2.9: a volunteer booked for hours that hadn't started is told plainly not to come in.
+    var mineGone = signupsOf(v).some(function (x) { return x.vol === ST.me.id && !x.inAt && x.end > v.ended; });
+    return back + '<p class="crumb">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p><h2 class="h1">This ' + (v.practice ? 'practice ' : '') + 'vigil has ended</h2>' +
+      '<p class="empty">' + (mineGone ? 'Your shift on it is canceled, so please don’t come in. ' : '') + 'Thank you for being part of it.' + (v.practice ? '' : ' Your coordinator will be in touch.') + '</p>';
   }
   var just = null;
   if (UI.justTook) signupsOf(v).forEach(function (x) { if (x.id === UI.justTook && x.vol === ST.me.id) just = x; });
-  var onit = just ? '<section class="card onit" id="onit" tabindex="-1"><p class="lab2">You’re on</p><p class="big">' + esc(dayLabel(just.start) + ', ' + r12(just.start, just.end)) + '</p><ol>' +
+  var onit = just ? '<section class="card onit" id="onit" tabindex="-1"><p class="lab2">You’re on</p><p class="big">' + esc(dayLabel(just.start) + ', ' + span12(just.start, just.end)) + '</p><ol>' +
       '<li>Arrive 5–10 minutes early. Check-in opens at ' + t12(just.start - rules().early * MIN) + '.</li>' +
       '<li>Wear your NODA volunteer badge.</li>' +
       '<li>Check in ' + esc(where(v)) + '. The charge nurse walks you to the room.</li></ol></section>' : '';
   var opts = signupOptions(v, now);
-  return back + '<p class="crumb">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p>' +
+  return back + '<p class="crumb">' + esc(v.unitName) + ' · ' + esc(v.id) + (v.practice ? ' · <span class="chip practice">Practice</span>' : '') + '</p>' +
     '<h2 class="h1">Sit with a patient</h2>' + (opts.length ? '<p class="sub">Two questions, then you confirm.</p>' : '') + onit +
     (opts.length ? signupQuestions(v, opts, now) : '<p class="empty">Every hour is covered right now. You’ll get an alert if hours open up.</p>') +
     watchList(v, now) +
-    '<p class="hint">When you arrive, the charge nurse shares the patient’s name, room and anything you should know. If the vigil ends, you’ll get an alert.</p>';
+    '<p class="hint">When you arrive, the charge nurse shares the patient’s name, room and anything you should know. If the vigil ends, you’ll get an alert.</p>' + tzNote();
 }
 
 /* ---------- coordinator ---------- */
@@ -1586,14 +1864,16 @@ function tabsHTML(role) {
 }
 function backBtn(act, id) { return '<div class="back-row"><button type="button" class="pillbtn back" data-act="' + act + '"' + (id ? ' data-id="' + esc(id) + '"' : '') + '>' + svg('back') + 'Back</button></div>'; }
 function viewSetup() {
-  return '<div class="head"><h2>Setup</h2></div>' + (ST.chargeNurses ? viewRns() : '') + viewLinks();
+  return '<div class="head"><h2>Setup</h2></div>' + healthView() + (ST.chargeNurses ? viewRns() : '') + practiceView() + viewLinks();
 }
 function volById(id) { for (var i = 0; i < ST.volunteers.length; i++) if (ST.volunteers[i].id === id) return ST.volunteers[i]; return null; }
 function viewVols() {
   if (VIEW.name === 'vol' && volById(VIEW.id)) return volDetail(volById(VIEW.id));
   if (VIEW.name === 'letter' && volById(VIEW.id)) return letterView(volById(VIEW.id));
   if (VIEW.name === 'bulk') return bulkView();
-  var vols = ST.volunteers.slice().sort(function (a, b) { return a.name.localeCompare(b.name); });
+  // Version 2.9: removed volunteers are listed apart, with Restore.
+  var all = ST.volunteers.slice().sort(function (a, b) { return a.name.localeCompare(b.name); });
+  var vols = all.filter(function (v) { return !v.removed; }), gone = all.filter(function (v) { return v.removed; });
   var links = !ST.signIn || ST.signIn.links;
   var add = !UI.addVol ? '<button type="button" class="btn block" data-act="addvol-open">Add a volunteer</button>' :
     '<form id="addvol" class="card form" novalidate><p class="eyebrow">Add a volunteer</p>' +
@@ -1610,6 +1890,9 @@ function viewVols() {
           ? 'Make a new link for ' + esc(v.name) + '? Their old link stops working' + (v.devices ? ', and so do notifications on their phone until they sign in with the new link' : '') + '.'
           : 'Sign ' + esc(v.name) + ' out of NODA Alert on every phone? They can sign in again with their email' + (v.devices ? '. Notifications on their phone stop until they do' : '') + '.') +
         '</p><div class="row"><button type="button" class="btn danger" data-act="reset" data-id="' + esc(v.id) + '">' + (links ? 'Make new link' : 'Sign out') + '</button><button type="button" class="btn" data-act="reset-cancel">Cancel</button></div></div>' : '';
+    var remove = UI.confirmRemove === v.id
+      ? '<div class="confirm"><p>Remove ' + esc(v.name) + '? They’re signed out on every phone and stop getting pages, and any hours they booked open to other volunteers. Their hours record stays, and you can restore them later.</p>' +
+        '<div class="row"><button type="button" class="btn danger" data-act="remove" data-id="' + esc(v.id) + '">Remove</button><button type="button" class="btn" data-act="remove-cancel">Cancel</button></div></div>' : '';
     return '<li><div class="row"><button type="button" class="who" data-act="vol-open" data-id="' + esc(v.id) + '"><b>' + esc(v.name) + '</b><small>' + esc([v.org, v.email].filter(Boolean).join(' · ')) + appText(v) + '</small></button>' +
       (v.onCall ? '<span class="chip taken">On call</span>' : '<span class="chip done">Paused</span>') + '</div>' +
       '<div class="row"><span class="hrs">' + esc(hrsTxt(v.hours.total)) + (letterOpen(v) ? ' · <b class="flag">letter requested</b>' : '') + '</span><span class="acts">' +
@@ -1617,21 +1900,37 @@ function viewVols() {
       '<button type="button" class="btn small" data-act="oncall" data-id="' + esc(v.id) + '" data-on="' + (v.onCall ? '0' : '1') + '">' + (v.onCall ? 'Pause' : 'Put on call') + '</button>' +
       '<button type="button" class="btn small" data-act="sendlink" data-id="' + esc(v.id) + '">' + (links ? 'Email link' : 'Email invite') + '</button>' +
       (links ? '<button type="button" class="btn small" data-act="showlink" data-id="' + esc(v.id) + '">' + (UI.showLink === v.id ? 'Hide link' : 'Show link') + '</button>' : '') +
-      '<button type="button" class="btn small quiet" data-act="reset-ask" data-id="' + esc(v.id) + '">' + (links ? 'New link' : 'Sign out phones') + '</button></span></div>' +
-      linkBox + reset + '</li>';
+      '<button type="button" class="btn small quiet" data-act="reset-ask" data-id="' + esc(v.id) + '">' + (links ? 'New link' : 'Sign out phones') + '</button>' +
+      (serverAtLeast('2.7.0') ? '<button type="button" class="btn small quiet" data-act="remove-ask" data-id="' + esc(v.id) + '">Remove</button>' : '') + '</span></div>' +
+      linkBox + reset + remove + '</li>';
   }).join('') + '</ul>' : '<p class="empty">No volunteers yet. Add the first one above.</p>';
-  return '<div class="head"><p class="eyebrow">' + plural(ST.onCall, 'volunteer') + ' on call of ' + ST.volunteers.length + '</p><h2>Volunteers</h2></div>' +
+  var removed = gone.length ? '<h3 class="sec">Removed</h3><ul class="roster">' + gone.map(function (v) {
+    return '<li><div class="row"><span><b>' + esc(v.name) + '</b><small>Removed ' + esc(medDate(v.removed)) + ' · ' + esc(hrsTxt(v.hours.total)) + '</small></span>' +
+      '<button type="button" class="btn small" data-act="restore" data-id="' + esc(v.id) + '">Restore</button></div></li>';
+  }).join('') + '</ul>' : '';
+  return '<div class="head"><p class="eyebrow">' + plural(ST.onCall, 'volunteer') + ' on call of ' + vols.length + '</p><h2>Volunteers</h2></div>' +
     '<div class="stack">' + add +
     (vols.length ? '<div class="row"><button type="button" class="btn" data-act="bulk-open">Add hours for several volunteers</button></div>' : '') +
-    list + '</div>' +
+    list + removed + '</div>' +
     '<p class="hint">' + (links
       ? 'Treat each volunteer’s link like a password. If one gets shared, make a new link.'
       : 'Email invite sends the app’s address and how to sign in with an email code.') + '</p>';
 }
 function appText(v) {
+  return appState(v) + extraText(v);
+}
+function appState(v) {
   if (appOnly()) return v.devices ? ' · app notifications on' + (v.tested ? ' (tested)' : '') : v.onCall ? ' · <b class="flag">no app yet: gets no pages</b>' : '';
   if (!v.devices) return '';
   return ' · app notifications on' + (v.tested ? ' (tested)' : '') + (v.pageEmail ? '' : ' · alert emails off');
+}
+// Version 2.9: night pages, this week's phone check, and a phone that hasn't opened NODA in two weeks.
+function extraText(v) {
+  var out = '';
+  if (v.nightPages) out += ' · night pages';
+  if (v.onCall && v.check === 'miss') out += ' · <b class="flag">missed this week’s phone check</b>';
+  if (v.onCall && v.devices && v.seen && Date.now() - v.seen > 14 * DAY) out += ' · <b class="flag">phone last opened NODA ' + esc(shortDate(v.seen)) + '</b>';
+  return out;
 }
 function letterOpen(v) { return !!(v.letterAsked && (!v.letterSent || v.letterSent < v.letterAsked)); }
 
@@ -1668,6 +1967,9 @@ function volDetail(v) {
       '<div class="row"><span>Pages</span><b>' + (v.onCall ? 'On call' : 'Paused') + '</b></div>' +
       '<div class="row"><span>App notifications</span><b>' + (v.devices ? plural(v.devices, 'phone') + (v.tested ? ', tested' : '') : appOnly() && v.onCall ? '<span class="flag">Off: gets no pages</span>' : 'Off') + '</b></div>' +
       '<div class="row"><span>Alert emails</span><b>' + (appOnly() ? 'Off for everyone (Settings tab)' : v.pageEmail ? 'On' : 'Off (phone only)') + '</b></div>' +
+      (v.nightPages !== undefined ? '<div class="row"><span>Night pages</span><b>' + (v.nightPages ? 'On' : 'Off') + '</b></div>' : '') +
+      (v.seen ? '<div class="row"><span>Phone last opened NODA</span><b>' + esc(medDate(v.seen)) + '</b></div>' : '') +
+      (v.check ? '<div class="row"><span>This week’s phone check</span><b>' + (v.check === 'ok' ? 'Answered' : v.check === 'miss' ? '<span class="flag">No answer</span>' : 'No phone set up') + '</b></div>' : '') +
       pe + '</div>';
 }
 // The add-hours form, for one volunteer (their page) or several (the bulk page).
@@ -1710,7 +2012,7 @@ function hoursProblem(d) {
   return '';
 }
 function bulkView() {
-  var vols = ST.volunteers.slice().sort(function (a, b) { return a.name.localeCompare(b.name); });
+  var vols = ST.volunteers.filter(function (v) { return !v.removed; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
   var picks = '<fieldset><legend>Volunteers</legend><div class="row"><button type="button" class="btn small" data-act="bulk-all">Select all</button><button type="button" class="btn small quiet" data-act="bulk-none">Clear</button></div>' +
     vols.map(function (v, i) {
       var on = UI.hDraft && UI.hDraft.volIds && UI.hDraft.volIds.indexOf(v.id) >= 0;
@@ -1789,7 +2091,7 @@ function viewRns() {
       '<button type="button" class="btn small' + (n.on ? ' quiet' : '') + '" data-act="rn-onoff" data-id="' + esc(n.email) + '" data-on="' + (n.on ? '0' : '1') + '">' + (n.on ? 'Turn off' : 'Turn on') + '</button>' +
       '</span></div></li>';
   }).join('') + '</ul>' : '<p class="empty">No charge nurses yet. Add the charge nurses on your pilot units above.</p>';
-  return '<h3 class="h3 first">Charge nurses</h3><p class="eyebrow">' + plural(on, 'charge nurse') + ' can sign in</p>' + setupNote +
+  return '<h3 class="h3' + (ST.health ? '' : ' first') + '">Charge nurses</h3><p class="eyebrow">' + plural(on, 'charge nurse') + ' can sign in</p>' + setupNote +
     '<div class="stack">' + add + rows + '</div>' +
     '<p class="hint">Each charge nurse signs in with their own work email, so the Log shows who paged. Turning someone off signs them out everywhere.</p>' +
     (si.shared
@@ -1832,6 +2134,42 @@ function pushStatusText() {
     default: return 'Not set up';
   }
 }
+// Version 2.9: is paging working? When the 15-minute check last ran, the outside monitor, the number nurses call,
+// backup emails, the weekly phone check, and notifications Google never delivered.
+function healthView() {
+  var h = ST.health;
+  if (!h) return '';
+  var now = Date.now(), wk = ST.weekly, bp = String(ST.backupPhone || '').trim();
+  var tick = !ST.tickAt ? '<span class="flag">Hasn’t run yet</span>'
+    : now - ST.tickAt > 35 * MIN ? '<span class="flag">Stopped: last ran ' + esc(dayWord(ST.tickAt) + ' at ' + t12(ST.tickAt)) + '</span>' : 'Ran at ' + esc(t12(ST.tickAt));
+  var week = !h.weeklyOn ? 'Off (Settings tab)'
+    : !wk ? 'First one Monday after 10 AM'
+    : !wk.done ? 'Sent ' + esc(dayWord(wk.at) + ' at ' + t12(wk.at)) + ', waiting for answers'
+    : (wk.ok || []).length + ' of ' + ((wk.ok || []).length + (wk.miss || []).length) + ' phones answered (' + esc(shortDate(wk.at)) + ')' +
+      ((wk.miss || []).length ? ' · <span class="flag">No answer: ' + esc(wk.miss.join(', ')) + '</span>' : '') +
+      ((wk.none || []).length ? ' · No phone: ' + esc(wk.none.join(', ')) : '');
+  return '<h3 class="h3 first">Is paging working?</h3><div class="status">' +
+    '<div class="row"><span>15-minute check</span><b>' + tick + '</b></div>' +
+    '<div class="row"><span>Outside monitor</span><b>' + (h.monitor === true ? 'On' : h.monitor === 'bad' ? '<span class="flag">Address not accepted: use the https://hc-ping.com/… check URL</span>' : '<span class="flag">Not set up</span>') + '</b></div>' +
+    '<div class="row"><span>Number nurses call</span><b>' + (bp ? esc(bp) : '<span class="flag">Not set (Backup phone)</span>') + '</b></div>' +
+    '<div class="row"><span>Backup emails</span><b>' + (h.backupEmails ? 'On: first page, sign-ups, cancellations' : 'Off') + '</b></div>' +
+    '<div class="row"><span>Weekly phone check</span><b>' + week + '</b></div>' +
+    '<div class="row"><span>Night pages</span><b>' + plural(ST.nightVols || 0, 'volunteer') + ' on call</b></div>' +
+    '<div class="row"><span>Most hours in a row</span><b>' + (h.maxInRow ? plural(h.maxInRow, 'hour') : 'No limit') + '</b></div>' +
+    (h.gaveUp ? '<div class="row"><span>Notifications never delivered</span><b class="flag">' + h.gaveUp + (h.gaveUpAt ? ', latest ' + esc(shortDate(h.gaveUpAt) + ' ' + t12(h.gaveUpAt)) : '') + '</b></div>' : '') +
+    '</div><p class="hint">The outside monitor emails you if the 15-minute check stops. The weekly check sends every on-call phone a test each Monday; phones that don’t answer are listed here and under Needs you.</p>';
+}
+// Version 2.9: practice vigils (and their sign-ups) are cleared from the app, never by deleting rows in the Sheet.
+function practiceView() {
+  if (!ST.practice) return '';
+  var active = ST.vigils.some(function (v) { return v.practice && v.status === 'active'; });
+  return '<h3 class="sec">Practice vigils</h3>' +
+    (UI.confirmClear
+      ? '<div class="confirm"><p>Delete every practice vigil and its sign-ups? Real vigils aren’t touched, and practice hours never counted.</p>' +
+        '<div class="row"><button type="button" class="btn danger" data-act="clear-practice">Clear practice vigils</button><button type="button" class="btn" data-act="clear-cancel">Cancel</button></div></div>'
+      : '<button type="button" class="btn block" data-act="clear-ask"' + (active ? ' disabled' : '') + '>Clear practice vigils</button>' +
+        (active ? '<p class="hint m0">End the active practice vigil first.</p>' : ''));
+}
 function viewLinks() {
   var si = ST.signIn || { email: false, links: true, shared: true };
   var codes = ST.codes || { today: 0, cap: 0 };
@@ -1845,10 +2183,10 @@ function viewLinks() {
   var where = !ST.appUrl
     ? 'Links open the Apps Script web app. To move everyone to the phone app, paste its address next to Phone app URL on the Settings tab.'
     : si.links ? '' : 'Emails open the phone app with no personal link in them. People sign in there with their email.';
-  var appOnlyN = ST.volunteers.filter(function (v) { return !v.pageEmail; }).length;
+  var appOnlyN = ST.volunteers.filter(function (v) { return !v.pageEmail && !v.removed; }).length;
   var rc = ST.receipts || { sent: 0, confirmed: 0, missed: 0 };
   var checked = rc.confirmed + rc.missed;
-  return '<h3 class="h3' + (ST.chargeNurses ? '' : ' first') + '">Links and status</h3>' +
+  return '<h3 class="h3' + (ST.chargeNurses || ST.health ? '' : ' first') + '">Links and status</h3>' +
     '<h3 class="sec first">Charge RN link</h3>' + rn +
     (si.shared ? '<p class="hint">Anyone with this link can page volunteers.' +
       (ST.chargeNurses ? ' To know who paged, add charge nurses above instead.' : '') + '</p>' : '') +
@@ -2026,14 +2364,22 @@ var ACT = {
   home: function () { DRAFT = null; if (VIEW.name !== 'home' && navPop('screen')) return; go({ name: 'home' }, 'back'); },
   open: function (el) { go({ name: 'vigil', id: el.getAttribute('data-id') }); },
   'new': function () {
-    // Where: what this phone paged with last time, when it still fits the Sheet's lists.
-    var last = rnLast() || {}, L = ST.lists;
-    var unitOk = ST.units.some(function (u) { return u.id === last.unitId; }), inOk = L.checkIn.indexOf(last.checkIn) >= 0;
-    // Version 2.8: no unit is chosen for a new phone (unless there is only one), so a page can't go to the wrong unit.
-    DRAFT = { crit1: [], crit2: [], consent: false, unitId: unitOk ? last.unitId : ST.units.length === 1 ? ST.units[0].id : '', checkIn: inOk ? last.checkIn : L.checkIn[0],
-      ppe: unitOk ? !!last.ppe : false, startIn: 0, windowH: 24, remembered: unitOk };
+    // Version 2.9: the unit is picked every time (unless there is only one), so a float nurse can't page the last unit
+    // by mistake; PPE starts at None, since it's about this patient; 48 hours, the criteria's own window. Only the
+    // check-in place is remembered on this phone. Each form gets its own request ID.
+    var last = rnLast() || {}, L = ST.lists, inOk = L.checkIn.indexOf(last.checkIn) >= 0;
+    DRAFT = { crit1: [], crit2: [], consent: false, unitId: ST.units.length === 1 ? ST.units[0].id : '', checkIn: inOk ? last.checkIn : L.checkIn[0],
+      ppe: false, startIn: 0, windowH: 48, remembered: inOk && last.checkIn !== L.checkIn[0], reqId: newReqId(), practice: false };
     go({ name: 'request' });
   },
+  'req-more': function () { var f = document.getElementById('req'); if (f) readForm(f); UI.reqMore = true; render(); focusField('f-startIn-0'); },
+  'dup-open': function (el) { var id = el.getAttribute('data-id'); DRAFT = null; UI = {}; VIEW = { name: 'vigil', id: id }; render(); window.scrollTo(0, 0); },
+  'dup-second': function () { if (!DRAFT) return; DRAFT.second = true; UI.dup = null; render(); sendRequest(); },
+  // Version 2.9: the nurse answers for a volunteer who hasn't checked in; hands a vigil's notices over; undoes an end.
+  here: function (el) { act('confirmPresence', [el.getAttribute('data-id'), true]); },
+  nothere: function (el) { act('confirmPresence', [el.getAttribute('data-id'), false]); },
+  'take-updates': function (el) { act('takeUpdates', [el.getAttribute('data-id')]); },
+  reopen: function (el) { act('reopenVigil', [el.getAttribute('data-id')]); },
   repage: function (el) { act('repage', [el.getAttribute('data-id')]); },
   extend: function (el) { act('extendVigil', [el.getAttribute('data-id'), 12]); },
   'end-ask': function (el) { UI.endAsk = el.getAttribute('data-id'); UI.reason = null; render(); },
@@ -2060,7 +2406,13 @@ var ACT = {
   'ts-down': function () { setSize(LOOK.size - 1); },
   'ts-up': function () { setSize(LOOK.size + 1); },
   checkin: function (el) { act('checkIn', [el.getAttribute('data-id')]); },
-  checkout: function (el) { act('checkOut', [el.getAttribute('data-id')]); },
+  // Version 2.9: Check out asks first.
+  'checkout-ask': function (el) {
+    UI.confirmOut = el.getAttribute('data-id'); render();
+    var c = document.getElementById('out-ask'); if (c) { try { c.focus({ preventScroll: true }); c.scrollIntoView({ block: 'nearest' }); } catch (e) { /* no focus */ } }
+  },
+  checkout: function (el) { act('checkOut', [el.getAttribute('data-id')], function () { UI = {}; }); },
+  'more-times': function () { UI.allTimes = true; render(); },
   'release-ask': function (el) { UI.confirmRelease = el.getAttribute('data-id'); render(); },
   keep: function () { UI = {}; render(); },
   release: function (el) { act('releaseSlot', [el.getAttribute('data-id')], function () { UI = {}; }); },
@@ -2153,7 +2505,15 @@ var ACT = {
       NEWPHONE = false; UI = {};
     });
   },
-  'role-switch': function (el) { switchRoleTo(el.getAttribute('data-role')); }
+  'role-switch': function (el) { switchRoleTo(el.getAttribute('data-role')); },
+  // Version 2.9: Remove and Restore (instead of deleting a row), and clearing practice vigils.
+  'remove-ask': function (el) { UI.confirmRemove = el.getAttribute('data-id'); render(); },
+  'remove-cancel': function () { UI.confirmRemove = null; render(); },
+  remove: function (el) { act('removeVolunteer', [el.getAttribute('data-id')], function () { UI = {}; }); },
+  restore: function (el) { act('restoreVolunteer', [el.getAttribute('data-id')]); },
+  'clear-ask': function () { UI.confirmClear = true; render(); },
+  'clear-cancel': function () { UI.confirmClear = false; render(); },
+  'clear-practice': function () { act('clearPractice', [], function () { UI = {}; }); }
 };
 app.addEventListener('click', function (e) {
   var el = e.target.closest('[data-act]'); if (!el || el.disabled) return;
@@ -2183,6 +2543,7 @@ app.addEventListener('change', function (e) {
     return;
   }
   if (t.id === 'f-pagemail') { act('setPageEmail', [t.checked]); return; }
+  if (t.id === 'f-night') { act('setNightPages', [t.checked]); return; }
   if (t.name === 'reason') { UI.reason = t.value; var b = app.querySelector('[data-act="end"]'); if (b) b.disabled = false; }
 });
 app.addEventListener('input', function (e) { if (e.target.id === 'ts-range') setSize(e.target.value); });
@@ -2193,13 +2554,7 @@ app.addEventListener('submit', function (e) {
   if (f.id === 'req') {
     readForm(f);
     if (!reqOK(DRAFT)) { updateReq(); return; }
-    var sent = DRAFT;
-    act('requestVigil', [DRAFT], function (st) {
-      LS.set('rnLast', JSON.stringify({ unitId: sent.unitId, checkIn: sent.checkIn, ppe: !!sent.ppe }));
-      DRAFT = null; VIEW = { name: 'vigil', id: st.lastCreated }; UI = {}; window.scrollTo(0, 0);
-      // Version 2.8: phones confirm within seconds; show the count without a reload.
-      [20000, 60000].forEach(function (ms) { setTimeout(function () { if (VIEW.name === 'vigil' && VIEW.id === st.lastCreated && autoRefreshOK()) load(); }, ms); });
-    });
+    sendRequest();
   } else if (f.id === 'addvol') {
     var p = {
       name: f.querySelector('#v-name').value, email: f.querySelector('#v-email').value,
@@ -2258,7 +2613,7 @@ document.addEventListener('visibilitychange', function () {
 /* ---------- start ---------- */
 // The phone app reads the key from "#k=" (or "?k=") once, keeps it on this device, and cleans the address bar.
 function takeFromUrl() {
-  var out = { key: '', vigil: '' }, found = false;
+  var out = { key: '', vigil: '', kind: '' }, found = false;
   [location.hash.replace(/^#/, ''), location.search.replace(/^\?/, '')].forEach(function (part) {
     part.split('&').forEach(function (kv) {
       var i = kv.indexOf('='); if (i < 1) return;
@@ -2266,6 +2621,7 @@ function takeFromUrl() {
       try { val = decodeURIComponent(val.replace(/\+/g, ' ')); } catch (e) { return; }
       if (name === 'k') { found = true; if (!out.key) out.key = cleanKey(val); }
       if (name === 'v') { found = true; if (!out.vigil && /^V-\d{1,9}$/.test(val)) out.vigil = val; }
+      if (name === 'n') { found = true; if (!out.kind && /^[a-z-]{1,20}$/.test(val)) out.kind = val; }
     });
   });
   if (found) { try { history.replaceState(null, '', location.pathname); } catch (e) { /* keep the address */ } }
@@ -2277,7 +2633,7 @@ function onSwMessage(e) {
   if (d.type === 'noda-updated') { if (d.version === APP_VERSION) return; UPDATED = true; if (document.visibilityState === 'hidden' || !ST) reloadApp(); return; }
   if (d.type === 'noda-push' && d.kind === 'test') { if (TEST.waiting) testCheckIn(1500); return; }
   if (d.type === 'noda-push') { if (KEY && !BUSY && !editing()) load(); }
-  else if (d.type === 'noda-open') { DEEP = /^V-\d{1,9}$/.test(d.vigil || '') ? d.vigil : null; if (KEY) load(); }
+  else if (d.type === 'noda-open') { DEEP = { vigil: /^V-\d{1,9}$/.test(d.vigil || '') ? d.vigil : '', kind: /^[a-z-]{1,20}$/.test(d.kind || '') ? d.kind : '' }; if (KEY) load(); }
   else if (d.type === 'noda-resubscribe') { var s = pushSaved(); if (s.on) { s.ep = 'changed'; pushSave(s); PUSH.lastRefresh = 0; pushRefresh(); } }
 }
 function startPWA() {
@@ -2298,7 +2654,7 @@ function startPWA() {
     return;
   }
   var u = takeFromUrl();
-  DEEP = u.vigil || null;
+  DEEP = u.vigil || u.kind ? { vigil: u.vigil, kind: u.kind } : null;
   keepStorage();
   if (u.key) switchKey(u.key); else KEY = cleanKey(LS.get('key'));
   if (KEY.length < 16) KEY = '';

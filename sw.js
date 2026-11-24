@@ -1,19 +1,20 @@
 /* NODA Alert service worker.
  * 1) Shows every push as a notification, always, even when the app is open. iPhone requires a
  *    visible notification for each push and withdraws push permission from sites that skip them.
- * 2) Opens the app at the right vigil when a notification is tapped.
+ * 2) Opens the app at the right vigil when a notification is tapped (version 2.9: and says what kind of notice it
+ *    was, and tells NODA the page was opened, so the nurse sees how many people opened it).
  * 3) Keeps the app's own files, so it opens at once and works offline (version 2.7: from the saved copy first;
  *    a new version installs in the background). It never touches Apps Script or Firebase requests,
  *    so vigil data is never cached.
  * 4) Sends back a receipt for a test notification, and for each alert (a page, and from version 2.3 a
  *    shift reminder or thank-you note) to a volunteer who gets alerts by app only. The receipt is a
  *    random ID from the notification, nothing else.
- * No patient information ever passes through here: pushes carry only unit, times, hours to cover and PPE.
+ * No patient information ever passes through here: pushes carry only the unit, times and hours to cover.
  */
 'use strict';
 // The name changes with every version (tools/build.js adds a fingerprint of the app's files), so a new
 // version installs side by side and replaces the old one in one step.
-var CACHE = 'noda-shell-2.8.0-b32afd2ec9';
+var CACHE = 'noda-shell-2.9.0-ecb4fbbaf8';
 // Receipts go only to an Apps Script web app address.
 var API_RE = /^https:\/\/script\.google\.com\/(a\/macros\/[^\/\s]+|macros)\/s\/[A-Za-z0-9_-]{10,}\/exec$/;
 // Version 2.7: the whole app is saved at install, so it opens at once from this copy, even on a slow connection.
@@ -25,6 +26,9 @@ var SHELL = [
 ];
 // Files that only change with a new version of the app: served from the cache first.
 var STATIC = /\/(vendor|fonts|icons)\//;
+
+// Version 2.9: notices someone must act on (a page, an open hour, a late check-in, a canceled shift).
+var URGENT = { 'new': 1, repage: 1, gap: 1, late: 1, escalate: 1, 'rn-late': 1, cancel: 1 };
 
 // The four files the app can't open without. If one of them fails to download, this version doesn't install
 // and the phone keeps the version it has; the browser tries again on the next visit.
@@ -103,32 +107,38 @@ self.addEventListener('push', function (event) {
   var title = clip(d.title, 80) || 'NODA Alert';
   var vigil = /^V-\d{1,9}$/.test(d.vigil || '') ? d.vigil : '';
   var tag = /^[A-Za-z0-9_-]{1,64}$/.test(d.tag || '') ? d.tag : '';
+  var kind = /^[a-z-]{1,20}$/.test(d.kind || '') ? d.kind : '';
+  var rid = /^[a-f0-9]{20}$/.test(d.rid || '') && API_RE.test(String(d.api || '')) ? { rid: d.rid, api: String(d.api) } : null;
   var opts = {
     body: clip(d.body, 240) || 'Open NODA Alert for details.',
     icon: 'icons/icon-192.png',
     badge: 'icons/badge-96.png',
     lang: 'en',
-    data: { vigil: vigil, kind: clip(d.kind, 20) }
+    data: { vigil: vigil, kind: kind, rid: rid ? rid.rid : '', api: rid ? rid.api : '' }
   };
   if (tag) { opts.tag = tag; opts.renotify = true; }
+  // Version 2.9: pages and other notices someone must act on stay on the screen until they're dealt with, and buzz
+  // harder (where the phone allows it; iPhones use their own settings).
+  if (URGENT[kind]) { opts.requireInteraction = true; opts.vibrate = [400, 200, 400, 200, 800]; }
   var shown = self.registration.showNotification(title, opts).catch(function () {
     return self.registration.showNotification(title, { body: opts.body });
   });
-  var jobs = [shown.catch(function () {}), tellApp({ type: 'noda-push', kind: opts.data.kind, vigil: vigil })];
+  var jobs = [shown.catch(function () {}), tellApp({ type: 'noda-push', kind: kind, vigil: vigil })];
   // The receipt goes only once the notification is on the screen. A test answers at once; pages wait up to
   // 8 seconds, so phones don't all answer in the same second.
-  if (d.rid && d.api) {
+  if (rid) {
     jobs.push(shown.then(function () {
-      return sendReceipt(String(d.api), String(d.rid), opts.data.kind === 'test' ? 0 : Math.floor(Math.random() * 8000));
+      return sendReceipt(rid.api, rid.rid, kind === 'test' ? 0 : Math.floor(Math.random() * 8000), false);
     }, function () {}));
   }
   event.waitUntil(Promise.all(jobs));
 });
 
-// Tells NODA Alert this notification arrived. mode "no-cors": the answer isn't needed, only the request.
-function sendReceipt(api, rid, delay) {
+// Tells NODA Alert this notification arrived (opened: false) or was tapped (true). mode "no-cors": the answer isn't
+// needed, only the request.
+function sendReceipt(api, rid, delay, opened) {
   if (!API_RE.test(api) || !/^[a-f0-9]{20}$/.test(rid)) return Promise.resolve();
-  var body = JSON.stringify({ fn: 'pushReceipt', args: [rid] });
+  var body = JSON.stringify({ fn: 'pushReceipt', args: opened ? [rid, true] : [rid] });
   var post = function () {
     return fetch(api, { method: 'POST', mode: 'no-cors', credentials: 'omit', cache: 'no-store', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: body });
   };
@@ -139,18 +149,24 @@ function wait(ms) { return new Promise(function (resolve) { setTimeout(resolve, 
 
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
-  var vigil = (event.notification.data && event.notification.data.vigil) || '';
+  var data = event.notification.data || {};
+  var vigil = /^V-\d{1,9}$/.test(data.vigil || '') ? data.vigil : '';
+  var kind = /^[a-z-]{1,20}$/.test(data.kind || '') ? data.kind : '';
   var scope = self.registration.scope;
-  var target = scope + (vigil ? '#v=' + vigil : '');
-  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+  var hash = [vigil ? 'v=' + vigil : '', kind ? 'n=' + kind : ''].filter(Boolean).join('&');
+  var target = scope + (hash ? '#' + hash : '');
+  var jobs = [self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
     var open = list.filter(function (c) { return c.url.indexOf(scope) === 0; })[0];
     if (open) {
       // Tell the open app which vigil to show first, then bring it to the front.
-      open.postMessage({ type: 'noda-open', vigil: vigil });
+      open.postMessage({ type: 'noda-open', vigil: vigil, kind: kind });
       return 'focus' in open ? open.focus().catch(function () {}) : undefined;
     }
     return self.clients.openWindow(target);
-  }));
+  })];
+  // Version 2.9: the page was opened by a person, not only shown.
+  if (data.rid && data.api) jobs.push(sendReceipt(data.api, data.rid, 0, true));
+  event.waitUntil(Promise.all(jobs));
 });
 
 // The browser replaced this phone's push subscription: ask an open app to register it again.
