@@ -13,7 +13,7 @@
 'use strict';
 // The name changes with every version (tools/build.js adds a fingerprint of the app's files), so a new
 // version installs side by side and replaces the old one in one step.
-var CACHE = 'noda-shell-2.7.0-f2b2ce2790';
+var CACHE = 'noda-shell-2.8.0-b32afd2ec9';
 // Receipts go only to an Apps Script web app address.
 var API_RE = /^https:\/\/script\.google\.com\/(a\/macros\/[^\/\s]+|macros)\/s\/[A-Za-z0-9_-]{10,}\/exec$/;
 // Version 2.7: the whole app is saved at install, so it opens at once from this copy, even on a slow connection.

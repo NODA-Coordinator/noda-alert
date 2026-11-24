@@ -160,7 +160,7 @@ html[data-ts="4"] .roles-seg,html[data-ts="5"] .roles-seg{grid-auto-flow:row}
 .btn.primary{background:var(--accent);color:var(--accent-ink);box-shadow:0 1px 2px rgba(0,0,0,.1),0 10px 22px -12px var(--accent-glow)}
 .btn.block{display:flex;width:100%}
 .btn.big{min-height:max(56px,3.1rem);font-size:1.08rem;padding:.6em 1.2em}
-.btn.small{min-height:max(44px,2.4rem);padding:.35em .95em;font-size:max(16px,.9rem)}
+.btn.small{min-height:max(48px,2.4rem);padding:.35em .95em;font-size:max(16px,.9rem)}
 .btn.quiet{background:transparent;box-shadow:none;color:var(--accent);padding-inline:.6em}
 .btn.outline{background:var(--accent-soft);color:var(--accent)}
 .btn.danger{background:var(--alert-soft);color:var(--alert-ink);box-shadow:inset 0 0 0 1.5px var(--alert-edge)}
@@ -323,19 +323,19 @@ legend{padding:0}
 .field{display:grid;gap:.4rem;margin-top:.8rem}
 .field:first-child{margin-top:0}
 .field > span,.fl2{font-size:max(16px,.9rem);color:var(--muted);font-weight:700}
-select,textarea,input[type="text"],input[type="email"],input[type="tel"],input[type="url"],input[type="date"],input[type="number"]{font:inherit;font-size:max(16px,1rem);padding:.55em .8em;border-radius:14px;border:1.5px solid var(--edge);background:var(--panel);color:var(--ink);width:100%;min-height:max(48px,2.7rem)}
+select,textarea,input[type="text"],input[type="email"],input[type="tel"],input[type="url"],input[type="date"],input[type="number"]{font:inherit;font-size:max(16px,1rem);padding:.55em .8em;border-radius:14px;border:1.5px solid var(--edge);background:var(--panel);color:var(--ink);width:100%;min-width:0;min-height:max(48px,2.7rem)}
 textarea{resize:vertical;line-height:1.45}
 select:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:1px}
 .seg{display:flex;flex-wrap:wrap;gap:8px}
 .seg label{position:relative;display:inline-block}
-.seg input{position:absolute;opacity:0;width:1px;height:1px}
+.seg input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
 .seg span{display:inline-flex;align-items:center;min-height:max(48px,2.7rem);padding:0 1em;border:1.5px solid var(--edge);border-radius:999px;background:var(--panel);font-weight:700;font-size:1rem;cursor:pointer;white-space:nowrap}
 .seg input:checked + span{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .seg input:focus-visible + span{outline:3px solid var(--accent);outline-offset:2px}
 .nprev{padding:1rem;border-radius:18px;background:var(--panel);box-shadow:inset 0 0 0 1.5px var(--line-2)}
 .nprev .nh{display:flex;align-items:center;gap:10px;font-size:max(16px,.86rem);font-weight:700;color:var(--muted)}
 .nprev .nh img{width:1.6em;height:1.6em;border-radius:23%}
-.nprev .nh span{margin-left:auto;font-weight:400}
+.nprev .nh span{margin-left:auto;font-weight:400;flex:none}
 .nprev .nt{font-weight:700;margin-top:.5rem;line-height:1.35}
 .nprev .nb{color:var(--ink-2);margin-top:2px;line-height:1.45}
 .foot{position:sticky;bottom:0;z-index:5;margin:0 -16px;padding:.8rem 16px calc(.8rem + env(safe-area-inset-bottom, 0px));background:var(--panel);border-top:1.5px solid var(--line-2)}
@@ -356,7 +356,7 @@ html[data-ts="5"] .stats{grid-template-columns:minmax(0,1fr)}
 .slot.rn{grid-template-columns:auto minmax(0,1fr)}
 .slot.vol{grid-template-columns:auto minmax(0,1fr)}
 html[data-ts="4"] .slot,html[data-ts="5"] .slot{grid-template-columns:minmax(0,1fr);gap:4px}
-html[data-ts="4"] .slot .chip,html[data-ts="5"] .slot .chip{white-space:normal}
+.slot .chip{white-space:normal}
 .t24{font-variant-numeric:tabular-nums;font-weight:700;font-size:.96rem;letter-spacing:.01em}
 .t12{font-weight:700;font-variant-numeric:tabular-nums}
 .chip{display:inline-flex;align-items:center;gap:6px;font-size:max(15px,.86rem);font-weight:700;padding:.2em .7em;border-radius:999px;white-space:nowrap;justify-self:start;max-width:100%;overflow:hidden;text-overflow:ellipsis}
@@ -381,6 +381,7 @@ html[data-ts="4"] .slot .chip,html[data-ts="5"] .slot .chip{white-space:normal}
 .linkbox{display:grid;gap:6px}
 .linkbox input{font-family:var(--f-mono);font-size:max(16px,.84rem)}
 .tbl-wrap{overflow-x:auto;border-radius:16px;background:var(--panel);box-shadow:var(--shadow)}
+.tbl-wrap:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 table{border-collapse:collapse;width:100%;font-size:max(15px,.88rem)}
 th,td{padding:8px 10px;text-align:left;border-top:1.5px solid var(--line);white-space:nowrap}
 thead th{border-top:0;font-size:max(14px,.78rem);color:var(--muted)}
@@ -397,7 +398,7 @@ table.hours tfoot th{border-top:2px solid var(--line-2);color:var(--ink)}
 .who{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer;flex:1;min-width:0}
 .who b{text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px}
 .who:focus-visible,.linkish:focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:4px}
-.linkish{font:inherit;color:var(--accent);background:none;border:0;padding:0;cursor:pointer;text-align:left;font-weight:700}
+.linkish{font:inherit;color:var(--accent);background:none;border:0;padding:0;cursor:pointer;text-align:left;font-weight:700;display:inline-flex;align-items:center;min-height:32px}
 .hist{list-style:none;margin:0;padding:0;background:var(--panel);border-radius:18px;box-shadow:var(--shadow)}
 .hist li{display:grid;grid-template-columns:6.4em minmax(0,1fr) auto;align-items:center;gap:4px 10px;padding:9px 12px;border-top:1.5px solid var(--line);font-size:max(16px,.92rem)}
 .hist li:first-child{border-top:0}
@@ -466,7 +467,7 @@ table.hours tfoot th{border-top:2px solid var(--line-2);color:var(--ink)}
 .themes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:.6rem}
 html[data-ts="5"] .themes{grid-template-columns:minmax(0,1fr)}
 .th{position:relative;display:block;cursor:pointer}
-.th input{position:absolute;opacity:0;width:1px;height:1px}
+.th input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
 .thbox{display:flex;flex-direction:column;align-items:center;gap:8px;min-height:max(104px,5.8rem);padding:10px 6px 12px;border-radius:16px;border:2px solid var(--line-2);background:var(--panel);color:var(--ink);font-weight:700;font-size:max(16px,.9rem);line-height:1.2;text-align:center}
 .th input:checked + .thbox{border-color:var(--accent);background:var(--accent-soft)}
 .th input:focus-visible + .thbox{outline:3px solid var(--accent);outline-offset:2px}
@@ -562,4 +563,70 @@ html[data-nav="back"]::view-transition-new(root){animation-name:noda-in-l}
   .btn:active,.part-btn:active,.len:active,.pill:active,.li:active,.card-btn:active,.rolebtn:active,.tab:active,.aa:active,.pillbtn:active{transform:none}
   .toast:not([hidden]){animation:none}
   ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none !important}
+}
+
+/* ---------- version 2.8 ---------- */
+/* Page confirmations on a vigil */
+.reachline{display:flex;gap:8px;align-items:flex-start;margin:0;font-size:max(16px,.95rem);line-height:1.4;color:var(--ink-2)}
+.reachline .ico{flex:none;margin-top:.15em}
+.reachline b{font-variant-numeric:tabular-nums}
+#newphone .btn.block:first-of-type{margin-top:.9rem}
+/* Check in / Check out sits right under the shift time; the details follow it. */
+.shift .after-main{margin-top:.7rem}
+/* Large text on a small phone: a one-row header, step by step (fitHeader in app.js). The button's words stay for screen readers. */
+.top.fit1{gap:.5rem}
+.top.fit1 .mark{width:2rem;height:2rem}
+.top.fit1 .ttl{flex:1 1 auto;min-width:0}
+.top.fit1 .ttl h1{font-size:1.1rem}
+.top.fit2 .aa{padding:0 .65em}
+.top.fit2 .aat{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+.top.fit3{flex-wrap:nowrap}
+.top.fit3 .mark{display:none}
+.top.fit3 .ttl h1{white-space:normal}
+/* Nothing may make the page wider than the phone: a wider page scrolls sideways and pushes the tab bar and the
+   Send bar off the bottom of the screen. The 12-hour strip takes the card's width instead of setting it, and long
+   email addresses and values wrap. */
+.lane{width:0;min-width:100%}
+/* The Page bar stops floating when it would cover more than 40% of the screen, or 50% once Page works (fitScrollPad in app.js). */
+.foot.loose{position:static}
+.fine[hidden]{display:none}
+.row > *{min-width:0}
+.row > b,.row > span,.paste b{overflow-wrap:anywhere}
+/* Narrow screens: phones zoomed to 150-200% (Android Page zoom) or set to very large text. Everything fits the width. */
+@media (max-width: 300px) {
+  /* Less padding around everything, so words keep their room. */
+  .wrap{padding-inline:max(10px, env(safe-area-inset-left, 0px))}
+  .foot{margin-inline:-10px;padding-inline:10px}
+  .card:not(.list){padding:.85rem .75rem}
+  .nprev,.prev,.confirm{padding:.75rem}
+  .roster > li{padding:.7rem .6rem}
+  .banner,.getapp{padding-inline:.75rem}
+  .opt{padding:.5rem .65rem;gap:10px}
+  .li{padding:8px 10px;gap:8px}
+  .av{width:2.1em;height:2.1em}
+  /* A label beside a switch, chip or button takes the line to itself when it needs the room, instead of being squeezed. */
+  .toggle{flex-wrap:wrap;gap:10px}
+  .toggle .tx,.who,.notif .row>span{flex:1 1 8em}
+  .axis .t2,.axis .t4,.ticks .t2,.ticks .t4,.axis > span:nth-child(3),.ticks > span:nth-child(3){display:none}
+  .axis span,.ticks span{white-space:nowrap}
+  .lb .ll{display:none}
+  .lb .ls{display:inline}
+  .vcard .rw,.lanehd,.notif .row{flex-wrap:wrap}
+  .stats,.nums,.btns2{grid-template-columns:minmax(0,1fr)}
+  .tab span{white-space:normal;text-align:center;line-height:1.1}
+  .roles-seg{grid-auto-flow:row}
+  .hist li,.hrow{grid-template-columns:minmax(0,1fr) auto}
+  .hist .d{grid-column:1 / -1}
+  .seg span,.chip,.rchip{white-space:normal}
+  .btn{padding-inline:.9em}
+  .themes,.lens{grid-template-columns:minmax(0,1fr)}
+  .part-btn{padding:.65rem .75rem}
+  p.big{font-size:1.25rem}
+  .slot.rn,.slot.vol{grid-template-columns:minmax(0,1fr);gap:4px}
+  html[data-ts="5"] .thbox{flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:10px 6px 12px}
+  html[data-ts="5"] .tsw{width:100%}
+  /* Last resort: a word too long for the line is hyphenated (or, where the phone can't, broken) rather than pushing
+     the page wider. Tables keep their words and scroll inside their own box. */
+  #app,.top,.roles{overflow-wrap:anywhere;-webkit-hyphens:auto;hyphens:auto;hyphenate-limit-chars:8 4 4;-webkit-hyphenate-limit-before:4;-webkit-hyphenate-limit-after:4}
+  #app table{overflow-wrap:normal;-webkit-hyphens:manual;hyphens:manual}
 }

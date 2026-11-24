@@ -7,7 +7,7 @@
 (function () {
 'use strict';
 var H = 3600e3, MIN = 60e3, DAY = 24 * H;
-var APP_VERSION = '2.7.0';
+var APP_VERSION = '2.8.0';
 var FIREBASE_DIR = './vendor/firebase/12.19.0/';
 var GAS = !!(window.google && google.script && google.script.run);
 var MODE = GAS ? 'gas' : (document.documentElement.getAttribute('data-app') === 'pwa' ? 'pwa' : 'none');
@@ -64,6 +64,10 @@ function svg(name, cls) { return '<svg class="' + (cls || 'ico') + '" viewBox="0
 // spinner while the server works); UPDATED means a newer version of the app is ready.
 var REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 var LAST_BTN = null, UPDATED = false, SCREEN = '', UPDATE_CHECK = Date.now();
+// Version 2.8: the history entries this app added, so the phone's Back gesture steps back instead of closing the app:
+// a tab other than the first, a screen you stepped into, the Text size screen (in that order, newest last).
+// NEWPHONE: just signed in on this phone while the same sign-in is on another phone.
+var NAV = { tab: false, screen: false, look: false, skip: 0, reload: false }, NEWPHONE = false;
 
 /* ---------- version 2.7: smooth screens ---------- */
 // A new screen replaces the old one; the same screen updates in place (a "morph"): only what changed is touched,
@@ -111,7 +115,8 @@ function navigate(dir, fn) {
   if (!document.startViewTransition || REDUCED || document.visibilityState !== 'visible' || html.hasAttribute('data-nav')) { fn(); return; }
   html.setAttribute('data-nav', dir);
   var done = function () { html.removeAttribute('data-nav'); };
-  try { document.startViewTransition(fn).finished.then(done, done); } catch (e) { done(); fn(); }
+  // A turn of the phone mid-slide skips the slide (the screen still changes); catching ready keeps that out of the console.
+  try { var t = document.startViewTransition(fn); t.ready.catch(function () {}); t.finished.then(done, done); } catch (e) { done(); fn(); }
 }
 
 /* ---------- helpers ---------- */
@@ -184,6 +189,7 @@ function lookLoad() {
 function applyLook() {
   var h = document.documentElement;
   h.setAttribute('data-ts', String(LOOK.size));
+  if (typeof fitHeader === 'function') fitHeader();
   if (LOOK.theme === 'auto') h.removeAttribute('data-theme'); else h.setAttribute('data-theme', LOOK.theme);
   barColors(h.getAttribute('data-role') || '');
 }
@@ -220,6 +226,7 @@ function openLook() {
   if (VIEW.name === 'request' && DRAFT) { var f = document.getElementById('req'); if (f) readForm(f); }
   VIEW = { name: 'textsize', back: VIEW, backUI: UI, y: window.scrollY || 0 };
   UI = {};
+  navPush('look');
   navigate('forward', function () {
     render(); window.scrollTo(0, 0);
     var h = app.querySelector('h2'); if (h) { h.setAttribute('tabindex', '-1'); try { h.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
@@ -227,6 +234,8 @@ function openLook() {
 }
 function closeLook() {
   var v = VIEW.name === 'textsize' ? VIEW : null;
+  // Version 2.8: leave through history when the Text size screen added an entry (popstate comes back here).
+  if (v && navPop('look')) return;
   VIEW = v && v.back ? v.back : { name: 'home' }; UI = v && v.backUI ? v.backUI : {};
   navigate('back', function () {
     render(); window.scrollTo(0, v ? v.y : 0);
@@ -334,13 +343,57 @@ function toast(msg) {
 function editing() {
   var a = document.activeElement;
   return VIEW.name === 'request' || VIEW.name === 'letter' || VIEW.name === 'bulk' || VIEW.name === 'textsize' || UI.addHours || UI.fix || UI.addVol || UI.addRn ||
-    UI.endAsk || UI.confirmRelease || UI.confirmReset || UI.confirmRn || UI.confirmSignOut ||
+    UI.endAsk || UI.confirmRelease || UI.confirmReset || UI.confirmRn || UI.confirmSignOut || UI.confirmPause || UI.confirmOthers ||
     (a && /INPUT|SELECT|TEXTAREA/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio');
+}
+// Version 2.8: a page notification opens the sign-up at Check and confirm with the suggested time chosen, the
+// same as the home screen's big button, so Sign up is on the first screen.
+function openSignup(id) {
+  var v = vigilById(id), best = v ? bestOption(signupOptions(v, Date.now())) : null;
+  VIEW = { name: 'vigil', id: id };
+  UI = best ? { pickStart: best.t, pickHours: best.h } : {};
+  navPush('screen');
+  navigate('forward', function () { render(); showConfirm(); });
+}
+function showConfirm() {
+  var c = document.getElementById('confirm');
+  if (!c) { window.scrollTo(0, 0); return; }
+  placeConfirm(c);
+  try { c.focus({ preventScroll: true }); } catch (e) { /* no focus */ }
+  keepConfirm(c);
+}
+// The whole box in the middle of the screen when it fits; when it doesn't (large text on a small phone),
+// its Sign up button just above the bottom edge.
+function placeConfirm(c) {
+  var b = c.querySelector('[data-act="take"]') || c, room = window.innerHeight - (parseFloat(document.documentElement.style.scrollPaddingBottom) || 0);
+  var r = c.getBoundingClientRect(), y = r.height + 32 <= room ? r.top - (room - r.height) / 2 : b.getBoundingClientRect().bottom + 16 - room;
+  if (Math.abs(y) >= 1) window.scrollTo(0, Math.max(0, (window.scrollY || 0) + y));
+}
+// The app's fonts can arrive a moment later and move things: keep the box in place for a few seconds,
+// until the person touches the screen, scrolls or types.
+var KEEP_CONFIRM = null;
+function keepConfirm(c) {
+  if (KEEP_CONFIRM) KEEP_CONFIRM();
+  if (typeof ResizeObserver !== 'function') return;
+  var evs = ['touchstart', 'pointerdown', 'wheel', 'keydown'], timer;
+  var ro = new ResizeObserver(function () { if (document.getElementById('confirm') === c) placeConfirm(c); else stop(); });
+  function stop() {
+    ro.disconnect(); clearTimeout(timer); KEEP_CONFIRM = null;
+    evs.forEach(function (e) { window.removeEventListener(e, stop, true); });
+  }
+  KEEP_CONFIRM = stop;
+  timer = setTimeout(stop, 4000);
+  evs.forEach(function (e) { window.addEventListener(e, stop, true); });
+  ro.observe(app);
+  if (aaBtn && aaBtn.parentNode) ro.observe(aaBtn.parentNode);
 }
 function afterLoad() {
   if (DEEP && ST && ST.role !== 'none') {
     var id = DEEP; DEEP = null;
-    if (vigilById(id)) { if (ST.role === 'coord') TAB = 'vigils'; go({ name: 'vigil', id: id }); }
+    if (vigilById(id)) {
+      if (ST.role === 'coord') TAB = 'vigils';
+      if (ST.role === 'vol') openSignup(id); else go({ name: 'vigil', id: id });
+    }
   }
   if (MODE === 'pwa' && Date.now() - PUSH.lastRefresh > 6 * H) pushRefresh();
   if (MODE === 'pwa' && KEY && ST && ST.role !== 'none' && (ROLES.key !== KEY || Date.now() - ROLES.at > 15 * MIN)) fetchRoles();
@@ -506,8 +559,11 @@ function signInView(reason) {
         '<button type="button" class="btn small quiet" data-act="signin-restart"' + dis + '>Use a different email</button></div>' +
       '<p class="hint">No code after a few minutes? Check your spam or junk folder.</p>';
   }
+  // Version 2.8: on iPhone, a sign-in in Safari doesn't carry over to the Home Screen app, so say "Home Screen first".
+  var iosFirst = MODE === 'pwa' && isIOS() && !standalone()
+    ? '<div class="note"><p class="m0"><b>On iPhone, add NODA to your Home Screen first.</b> Tap Share ' + SHARE_ICON + ', then Add to Home Screen. Open NODA from your Home Screen and sign in there. A sign-in here in Safari doesn’t carry over.</p></div>' : '';
   return (reason === 'revoked' ? '<p class="note">You’ve been signed out on this phone. Sign in again to keep using NODA Alert.</p>' : '') +
-    '<div class="head"><p class="eyebrow">Sign in</p><h2>Sign in to NODA Alert</h2></div>' +
+    '<div class="head"><p class="eyebrow">Sign in</p><h2>Sign in to NODA Alert</h2></div>' + iosFirst +
     '<form id="signin-email" class="card paste" novalidate>' +
       '<p class="m0">Enter the email address your NODA coordinator has for you. NODA Alert emails you a 6-digit code. There’s no password.</p>' +
       '<label class="field" for="s-email"><span>Email</span><input type="email" id="s-email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" value="' + esc(SIGN.email || '') + '"></label>' +
@@ -525,7 +581,9 @@ function sendCode(email, again) {
   var wait = again && SIGN.sentAt ? 60e3 - (Date.now() - SIGN.sentAt) : 0;
   if (wait > 0) { toast('You can ask for a new code in ' + Math.ceil(wait / 1000) + ' seconds.'); return; }
   SIGN.busy = true; render();
-  apiCall('requestCode', [email], '').then(function () {
+  apiCall('requestCode', [email], '').then(function (r) {
+    // Version 2.8: NODA has used up today's sign-in emails. Say so instead of waiting for a code that won't come.
+    if (r && r.paused) { SIGN.err = 'NODA has sent all the sign-in emails it can for today. Try again tomorrow.'; return; }
     SIGN = { step: 'code', email: email, sentAt: Date.now() };
     if (again) toast('A new code is on its way. Use the newest one.');
   }, function (err) {
@@ -549,6 +607,7 @@ function checkCode(role) {
     if (r && r.choose) { SIGN.step = 'role'; SIGN.choices = r.choose; return; }
     if (!r || !r.key || !r.state || r.state.role === 'none') throw new Error('Couldn’t sign in. Ask for a new code and try again.');
     switchKey(r.key); ST = r.state; SIGN = { step: 'email' }; PASTE = {}; VIEW = { name: 'home' }; TAB = 'vigils'; UI = {};
+    NEWPHONE = true; keepStorage();
     rolesSave(r.roles, r.who);
     LS.del('signin');
     toast(signedInText(ST));
@@ -556,7 +615,11 @@ function checkCode(role) {
   }, function (err) {
     SIGN.err = (err && err.message) || 'Couldn’t check that code. Try again.';
     SIGN.step = 'code';
-  }).then(function () { SIGN.busy = false; render(); if (SIGN.step === 'code' && SIGN.err) focusField('s-code'); });
+  }).then(function () {
+    SIGN.busy = false; render();
+    if (SIGN.step === 'code' && SIGN.err) focusField('s-code');
+    else if (KEY && ST && SIGN.step === 'email') window.scrollTo(0, 0); // signed in: Home from the top
+  });
 }
 
 /* ---------- phone app: sign in by pasting your link ---------- */
@@ -598,6 +661,14 @@ function trySignIn(text) {
 }
 // Signing in with a different link on a phone that has notifications on: stop the previous person's
 // notifications on this phone now, and register it for the new person on the next refresh.
+// Version 2.8: ask the browser to keep NODA's storage (the sign-in) when the phone runs low on space. Chrome and
+// Safari decide without asking; Firefox would show a question, so it is skipped there.
+function keepStorage() {
+  try {
+    if (MODE !== 'pwa' || !navigator.storage || !navigator.storage.persist || /Firefox/i.test(navigator.userAgent)) return;
+    navigator.storage.persisted().then(function (p) { if (!p) return navigator.storage.persist(); }).catch(function () { /* fine either way */ });
+  } catch (e) { /* not available */ }
+}
 function switchKey(k) {
   var old = KEY || cleanKey(LS.get('key'));
   if (old && old !== k) {
@@ -734,7 +805,11 @@ function deviceCard(before) {
   var body = UI.confirmSignOut
     ? '<div class="confirm"><p>Sign out of NODA Alert on this phone?' + (pushState() === 'on' ? ' Notifications on this phone stop.' : '') + again + '</p><div class="row"><button type="button" class="btn danger" data-act="signout">Sign out</button><button type="button" class="btn" data-act="signout-cancel">Cancel</button></div></div>'
     : '<div class="row"><button type="button" class="btn small" data-act="signout-ask">Sign out of this phone</button></div>';
-  return '<h3 class="sec">This phone</h3>' + (before ? '<div class="card-gap">' + before + '</div>' : '') + '<div class="card device"><p class="m0">Signed in as <b>' + esc(who) + '</b>.</p>' + body +
+  var others = ST.role === 'vol' ? otherPhones() : [];
+  var otherHTML = !others.length ? '' : UI.confirmOthers
+    ? '<div class="confirm"><p>Sign out your other ' + (others.length === 1 ? 'phone' : others.length + ' phones') + '? ' + (others.length === 1 ? 'It stops' : 'They stop') + ' getting NODA pages, and anyone using ' + (others.length === 1 ? 'it' : 'them') + ' has to sign in again.</p><div class="row"><button type="button" class="btn danger" data-act="others-yes">Sign out other phones</button><button type="button" class="btn" data-act="others-no">Cancel</button></div></div>'
+    : '<p class="m0">Also signed in on ' + esc(phoneNames(others)) + '.</p><div class="row"><button type="button" class="btn small" data-act="others-ask">Sign out other phones</button></div>';
+  return '<h3 class="sec">This phone</h3>' + (before ? '<div class="card-gap">' + before + '</div>' : '') + '<div class="card device"><p class="m0">Signed in as <b>' + esc(who) + '</b>.</p>' + otherHTML + body +
     '<p class="ver">NODA Alert ' + APP_VERSION + (ST.version ? ' · server ' + esc(ST.version) : '') + '</p></div>';
 }
 
@@ -748,7 +823,7 @@ function platformLabel() {
 }
 // 'na' | 'unconfigured' | 'ios-old' | 'ios-install' | 'unsupported' | 'denied' | 'on' | 'off'
 function pushState() {
-  if (MODE !== 'pwa' || !ST || (ST.role !== 'vol' && ST.role !== 'coord')) return 'na';
+  if (MODE !== 'pwa' || !ST || (ST.role !== 'vol' && ST.role !== 'coord' && !(ST.role === 'rn' && ST.rnPush && ST.rnPush.can))) return 'na';
   if (!CFG.pushReady || !ST.push) return 'unconfigured';
   if (isIOS()) { var v = iosVersion(); if (v && v < 16.04) return 'ios-old'; if (!standalone()) return 'ios-install'; }
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || typeof Notification === 'undefined') return 'unsupported';
@@ -759,12 +834,12 @@ function pushState() {
 function notifCard() {
   var s = pushState();
   if (s === 'na' || (s === 'unconfigured' && ST.role !== 'coord')) return '';
-  var coord = ST.role === 'coord';
-  var what = coord ? 'vigil updates' : 'pages';
+  var coord = ST.role === 'coord', rn = ST.role === 'rn';
+  var what = coord ? 'vigil updates' : rn ? 'sign-up notices' : 'pages';
   // Said only when it's true: a volunteer who turned alert emails off gets pages on their other phone, not by email.
-  var until = appOnly() ? ' Until then, NODA can’t send ' + what + ' to this phone.' : coord || ST.me.pageEmail ? ' Until then, ' + what + ' come by email.' : '';
+  var until = rn ? '' : appOnly() ? ' Until then, NODA can’t send ' + what + ' to this phone.' : coord || ST.me.pageEmail ? ' Until then, ' + what + ' come by email.' : '';
   // With alerts by app only, a volunteer with no phone getting notifications gets no pages: the card says so in color.
-  var need = appOnly() && !coord && s !== 'on' && !ST.me.devices;
+  var need = appOnly() && !coord && !rn && s !== 'on' && !ST.me.devices;
   var head, sub, chip = '', acts = '', extra = '';
   var dis = PUSH.busy ? ' disabled' : '';
   if (s === 'unconfigured') {
@@ -793,13 +868,14 @@ function notifCard() {
     head = 'Notifications are on';
     chip = '<span class="chip on">On</span>';
     // Volunteers: the Available switch above and Email me alerts too below already say where alerts go.
-    sub = coord ? 'Vigil updates come to this phone' + (appOnly() ? '.' : ' and by email.') : '';
+    sub = coord ? 'Vigil updates come to this phone' + (appOnly() ? '.' : ' and by email.') : rn ? 'You hear when a volunteer signs up for a vigil you paged, or an hour still has no one.' : '';
     acts = '<button type="button" class="btn small" data-act="push-test"' + dis + (TEST.waiting ? ' disabled' : '') + '>Send a test</button><button type="button" class="btn small quiet" data-act="push-off"' + dis + '>Turn off</button>';
-    extra = testLine() + (coord ? '' : pageEmailBlock());
+    extra = testLine() + (coord || rn ? '' : pageEmailBlock());
   } else {
-    head = coord ? 'Get vigil updates on this phone' : !appOnly() ? 'Get pages on this phone' : ST.me.devices ? 'Get pages on this phone too' : 'Turn on notifications to get pages';
+    head = coord ? 'Get vigil updates on this phone' : rn ? 'Know when volunteers sign up' : !appOnly() ? 'Get pages on this phone' : ST.me.devices ? 'Get pages on this phone too' : 'Turn on notifications to get pages';
     chip = '<span class="chip off">Off</span>';
-    sub = appOnly() ? 'NODA sends ' + what + ' to the app, not by email.'
+    sub = rn ? 'NODA tells you when a volunteer signs up for a vigil you paged, or when an hour still has no one.'
+      : appOnly() ? 'NODA sends ' + what + ' to the app, not by email.'
       : 'Get ' + what + ' right away, even when the app is closed.' +
       (!coord && ST.me.appFirst && ST.me.pageEmail && ST.me.receiptsOk ? ' After a test, they come here instead of by email.' : '');
     acts = '<button type="button" class="btn primary" data-act="push-on"' + dis + '>' + (PUSH.busy ? 'Turning on…' : 'Turn on notifications') + '</button>';
@@ -813,7 +889,7 @@ function notifCard() {
 // This phone's row from the server (volunteers), if it is registered.
 function thisPhone() {
   var id = pushSaved().id;
-  var list = (ST && ST.me && ST.me.phones) || [];
+  var list = (ST && ST.me && ST.me.phones) || (ST && ST.rnPush && ST.rnPush.phones) || [];
   for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
   return null;
 }
@@ -978,7 +1054,7 @@ function pushTurnOff() {
 // and notice if notifications were turned off in the phone's settings.
 function pushRefresh() {
   var s = pushSaved();
-  if (MODE !== 'pwa' || PUSH.refreshing || PUSH.busy || !s.on || !KEY || !ST || ST.role === 'rn') return;
+  if (MODE !== 'pwa' || PUSH.refreshing || PUSH.busy || !s.on || !KEY || !ST || (ST.role === 'rn' && !(ST.rnPush && ST.rnPush.can))) return;
   var st = pushState();
   if (st === 'unconfigured' || st === 'na' || st === 'ios-install' || st === 'ios-old' || st === 'unsupported') return;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
@@ -1041,7 +1117,7 @@ function rnHome() {
     return installBanner() + getAppCard() +
       '<h2 class="greet">' + greeting() + (ST.name ? ', ' + esc(firstName(ST.name)) : '') + '.</h2>' +
       req + '<p class="hint">' + esc(reachText()) + '.</p>' + reachNote + modeNote +
-      '<h3 class="sec">Active now</h3>' + list + idle + endedHTML + deviceCard();
+      '<h3 class="sec">Active now</h3>' + list + idle + endedHTML + deviceCard(notifCard());
   }
   var sum = active.length
     ? (active.length === 1 ? 'One vigil is active. ' : active.length + ' vigils are active. ') +
@@ -1076,7 +1152,17 @@ function seg(name, val, label, cur) {
   var id = 'f-' + name + '-' + String(val).replace(/\W/g, '');
   return '<label for="' + id + '"><input type="radio" id="' + id + '" name="' + name + '" value="' + esc(val) + '"' + (String(cur) === String(val) ? ' checked' : '') + '><span>' + esc(label) + '</span></label>';
 }
-function reqOK(d) { return d.crit1.length > 0 && d.crit2.length > 0 && d.consent; }
+function reqOK(d) { return d.crit1.length > 0 && d.crit2.length > 0 && d.consent && !!d.unitId; }
+// What still stops the page from going out, in one sentence (version 2.8).
+function reqWhy(d) {
+  var need = [];
+  if (!d.crit1.length || !d.crit2.length) need.push('check one item in each list');
+  if (!d.consent) need.push('confirm permission');
+  if (!d.unitId) need.push('pick the unit');
+  if (!need.length) return '';
+  var s = need.length === 1 ? need[0] : need.slice(0, -1).join(', ') + ' and ' + need[need.length - 1];
+  return s.charAt(0).toUpperCase() + s.slice(1) + ' to send.';
+}
 function reqStart(d) { return Math.floor(Date.now() / (30 * MIN)) * 30 * MIN + d.startIn * H; }
 function covLine(d) {
   var start = reqStart(d), end = start + d.windowH * H;
@@ -1086,7 +1172,7 @@ function unitName(id) { for (var i = 0; i < ST.units.length; i++) if (ST.units[i
 // What volunteers' phones show, worded as the server words it (pageMsg_ in Code.gs).
 function pagePreview(d) {
   var r = rules(), start = reqStart(d), soon = start <= Date.now() + 5 * MIN;
-  var body = 'A patient on ' + unitName(d.unitId) + ' needs a companion, ' + (soon ? 'starting now' : 'from ' + hmm(start)) + ', for the next ' + d.windowH +
+  var body = 'A patient on ' + (unitName(d.unitId) || 'your unit') + ' needs a companion, ' + (soon ? 'starting now' : 'from ' + hmm(start)) + ', for the next ' + d.windowH +
     ' hours. Sign up for ' + r.min + ' to ' + r.max + ' hours.' + (d.ppe ? ' PPE needed.' : '');
   return '<div class="nh">' + (LOGO ? '<img src="' + esc(LOGO) + '" alt="">' : '') + 'NODA Alert<span>now</span></div>' +
     '<p class="nt">NODA page</p><p class="nb">' + esc(body) + '</p>';
@@ -1117,8 +1203,8 @@ function rnRequest() {
       '<fieldset><legend class="fl">Volunteers will see</legend><div class="nprev" id="req-prev">' + pagePreview(d) + '</div>' +
         '<p class="hint">The page has no patient details. Share those in person at check-in.</p></fieldset>' +
       '<div class="foot"><button type="submit" class="btn primary big block" id="send"' + (ok ? '' : ' disabled') + '>Page ' + plural(reachN(), 'on-call volunteer') + '</button>' +
-        '<p class="hint" id="why"' + (ok ? ' hidden' : '') + '>Check one item in each list and confirm permission to send.</p>' +
-        '<p class="fine">' + svg('lock') + 'No patient details are sent.</p></div>' +
+        '<p class="hint" id="why"' + (ok ? ' hidden' : '') + '>' + esc(reqWhy(d)) + '</p>' +
+        '<p class="fine" id="fine"' + (ok ? '' : ' hidden') + '>' + svg('lock') + 'No patient details are sent.</p></div>' +
     '</form>';
 }
 function readForm(f) {
@@ -1139,6 +1225,9 @@ function updateReq() {
   document.getElementById('req-prev').innerHTML = pagePreview(DRAFT);
   document.getElementById('send').disabled = !ok;
   document.getElementById('why').hidden = ok;
+  document.getElementById('why').textContent = reqWhy(DRAFT);
+  document.getElementById('fine').hidden = !ok;
+  fitScrollPad();
 }
 // One row of the coverage list: a volunteer's sign-up, or a stretch of open hours.
 function segChip(g) {
@@ -1159,6 +1248,17 @@ function segChip(g) {
     case 'cancelled': return '<span class="chip done">Canceled</span>';
   }
   return '';
+}
+// Version 2.8: how many volunteers' phones confirmed the latest page, and how to hear about sign-ups.
+function reachLine(v) {
+  if (v.status !== 'active') return '';
+  var out = '';
+  if (v.reach && v.reach.sent) {
+    var r = v.reach, fresh = Date.now() - r.at < 10 * MIN;
+    out += '<p class="reachline">' + svg('bell') + '<span>' + (r.kind === 'repage' ? 'Re-page' : 'Page') + ' confirmed on <b>' + r.confirmed + ' of ' + r.sent + '</b> volunteers’ phones' + (fresh ? ' so far' : '') + '.</span></p>';
+  }
+  if (ST.role === 'rn' && pushState() === 'off') out += '<p class="hint">To hear when a volunteer signs up, turn on notifications under This phone on the home screen.</p>';
+  return out;
 }
 function rnVigil(v) {
   var now = Date.now(), s = stats(v, now), rows = '', last = '';
@@ -1189,6 +1289,7 @@ function rnVigil(v) {
     '<p class="crumb">' + esc(v.unitName) + ' · ' + esc(v.id) + '</p><h2 class="h1">Coverage</h2>' +
     '<div class="stack"><div>' + status + '</div>' +
     '<div class="stats"><div><b>' + s.filled + '/' + s.total + '</b><span>hours filled</span></div><div><b>' + (s.gap ? (s.gap.start <= now ? 'Now' : t24(s.gap.start)) : 'None') + '</b><span>next gap</span></div><div><b>' + v.paged + '</b><span>paged</span></div></div>' +
+    reachLine(v) +
     '<div class="card">' + ribbon(v, s, now) + '</div>' +
     actions + '</div>' +
     '<h3 class="sec">Hours</h3><ul class="slots">' + rows + '</ul>' +
@@ -1226,16 +1327,54 @@ function volHome() {
   var first = firstName(ST.me.name);
   // Notifications that need attention go at the top; once they're on, their card waits under This phone.
   var ps = pushState(), notif = ps === 'on' ? '' : notifCard(), notifLater = ps === 'on' ? notifCard() : '';
+  // Version 2.8: a shift that's starting (check-in open) or under way goes first, so Check in is in sight.
+  var urgent = mine.length && shiftNow(mine[0].s, now);
+  // Just signed in on this phone: turning on notifications is the next step, so its card comes first.
+  var first1 = NEWPHONE && !!notif;
+  var pause = UI.confirmPause
+    ? '<div class="confirm" id="pause-ask"><p>Pause NODA pages? You won’t get pages or “no one yet” alerts until you turn this back on.</p>' +
+      '<div class="row"><button type="button" class="btn danger" data-act="pause-yes">Pause pages</button><button type="button" class="btn" data-act="pause-no">Keep getting pages</button></div></div>' : '';
   return installBanner() + getAppCard() +
     '<h2 class="greet">' + greeting() + (first ? ', ' + esc(first) : '') + '.</h2>' +
+    (urgent ? nextShift(mine[0], mine.length, now) : '') +
+    (first1 ? '<div class="card-gap">' + notif + '</div>' : '') +
     '<label class="card toggle" for="f-avail"><span class="tx"><b>Available for NODA pages</b><small>' +
       (ST.me.onCall ? by : 'Paused. You won’t get alerts.') +
-    '</small></span><input type="checkbox" id="f-avail" role="switch"' + (ST.me.onCall ? ' checked' : '') + '></label>' +
-    peNote + (notif ? '<div class="card-gap">' + notif + '</div>' : '') +
+    '</small></span><input type="checkbox" id="f-avail" role="switch"' + (ST.me.onCall ? ' checked' : '') + '></label>' + pause +
+    peNote + (notif && !first1 ? '<div class="card-gap">' + notif + '</div>' : '') +
+    newPhoneCard() +
     (needs.length ? needs.map(function (v) { return needCard(v, now); }).join('')
       : '<div class="card calm"><h3 class="ct">Every hour is covered right now.</h3><p class="sub">Thank you. When a patient needs company, it shows here.</p></div>') +
-    (mine.length ? nextShift(mine[0], mine.length, now) : '') +
+    (mine.length && !urgent ? nextShift(mine[0], mine.length, now) : '') +
     (MODE === 'pwa' ? deviceCard(notifLater) : '<p class="hint">Add this page to your home screen so it’s one tap away.</p>');
+}
+// True while a shift can be checked in (from 10 minutes before) or is under way.
+function shiftNow(s, now) {
+  var early = rules().early * MIN;
+  return (s.inAt && !s.outAt) || (!s.inAt && now >= s.start - early && now < s.end);
+}
+// Version 2.8: right after signing in on a new phone, if the same sign-in is on another phone, offer to sign it out.
+function otherPhones() {
+  if (!ST || ST.role !== 'vol' || !ST.me || !ST.me.phones || !serverAtLeast('2.6.0')) return [];
+  var mine = pushSaved().id;
+  return ST.me.phones.filter(function (p) { return p.id !== mine; });
+}
+// True when the server is at least version v ('2.6.0'), so a newer phone app offers only what the server can do.
+function serverAtLeast(v) {
+  var a = String((ST && ST.version) || '0').split('.'), b = v.split('.');
+  for (var i = 0; i < 3; i++) { var x = +a[i] || 0, y = +b[i] || 0; if (x !== y) return x > y; }
+  return true;
+}
+function phoneNames(list) {
+  return list.map(function (p) { return String(p.platform || 'Phone').replace(/ \(.*\)$/, '') + (p.seen ? ', last used ' + shortDate(p.seen) : ''); }).join('; ');
+}
+function newPhoneCard() {
+  var o = otherPhones();
+  if (!NEWPHONE || !o.length) return '';
+  return '<section class="card" id="newphone"><h3 class="ct">You’re signed in on this phone.</h3>' +
+    '<p class="sub">Your NODA sign-in is also on ' + (o.length === 1 ? 'another phone' : o.length + ' other phones') + ' (' + esc(phoneNames(o)) + '). Not using ' + (o.length === 1 ? 'it' : 'them') + ' anymore? Sign ' + (o.length === 1 ? 'it' : 'them') + ' out so pages stop going there.</p>' +
+    '<button type="button" class="btn primary block" data-act="others-yes">Sign out my other phones</button>' +
+    '<button type="button" class="btn block" data-act="others-keep">' + (o.length === 1 ? 'Keep both' : 'Keep them all') + '</button></section>';
 }
 // The suggested sign-up on the home screen: the first open time, for 2 hours when 2 fit.
 function bestOption(opts) {
@@ -1268,8 +1407,11 @@ function shiftBody(v, s, now) {
   }
   var info = inNow ? esc(v.unitName) + '. You’re checked in. Check out when you leave.'
     : esc(v.unitName) + '. Check in ' + esc(where(v)) + (canIn ? ' now.' : ' from ' + t12(s.start - early) + '.');
-  return '<p class="big">' + esc(dayLabel(s.start) + ', ' + r12(s.start, s.end)) + '</p>' +
-    (inNow ? '<p><span class="chip bedside">At bedside</span></p>' : '') + '<p>' + info + '</p>' + acts;
+  var when = '<p class="big">' + esc(dayLabel(s.start) + ', ' + r12(s.start, s.end)) + '</p>' + (inNow ? '<p><span class="chip bedside">At bedside</span></p>' : '');
+  // Version 2.8: while Check in or Check out is open, that button comes right under the time, before the details.
+  if (UI.confirmRelease === s.id || !(inNow || canIn)) return when + '<p>' + info + '</p>' + acts;
+  return when + '<button type="button" class="btn primary big block" data-act="' + (inNow ? 'checkout' : 'checkin') + '" data-id="' + esc(s.id) + '">' + (inNow ? 'Check out' : 'Check in') + '</button>' +
+    '<p class="after-main">' + info + '</p>' + (inNow ? '' : '<button type="button" class="btn outline block" data-act="release-ask" data-id="' + esc(s.id) + '">I can’t make it</button>');
 }
 function nextShift(x, count, now) {
   return '<section class="card shift"><p class="lab2">Your next shift</p>' + shiftBody(x.v, x.s, now) +
@@ -1672,10 +1814,10 @@ function viewReport() {
       '<td class="num">' + h.shifts + '</td><td class="num">' + esc(hrsNum(h.vigil)) + '</td><td class="num">' + esc(hrsNum(h.training)) + '</td><td class="num"><b>' + esc(hrsNum(h.total)) + '</b></td></tr>';
   }).join('');
   return '<div class="head"><p class="eyebrow">' + plural(ST.report.length, 'vigil') + ' · ' + total.toFixed(1) + ' companion hours</p><h2>Report</h2></div>' +
-    (rows ? '<div class="tbl-wrap"><table><thead><tr><th>Vigil</th><th>Unit</th><th>Started</th><th>Ended</th><th>Outcome</th><th class="num">Hours covered</th><th class="num">Companions</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<p class="empty">No vigils yet.</p>') +
+    (rows ? '<div class="tbl-wrap" tabindex="0" role="region" aria-label="Vigil report"><table><thead><tr><th>Vigil</th><th>Unit</th><th>Started</th><th>Ended</th><th>Outcome</th><th class="num">Hours covered</th><th class="num">Companions</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<p class="empty">No vigils yet.</p>') +
     '<p class="hint">The measures the NODA Program Guide suggests tracking. The full record is in the Sheet.</p>' +
     '<h3 class="sec">Volunteer hours</h3>' +
-    (hrows ? '<div class="tbl-wrap"><table class="hours"><thead><tr><th>Volunteer</th><th class="num">Shifts</th><th class="num">Bedside</th><th class="num">Training</th><th class="num">Total</th></tr></thead><tbody>' + hrows +
+    (hrows ? '<div class="tbl-wrap" tabindex="0" role="region" aria-label="Volunteer hours"><table class="hours"><thead><tr><th>Volunteer</th><th class="num">Shifts</th><th class="num">Bedside</th><th class="num">Training</th><th class="num">Total</th></tr></thead><tbody>' + hrows +
       '</tbody><tfoot><tr><th>All volunteers</th><th class="num">' + sum.shifts + '</th><th class="num">' + esc(hrsNum(sum.vigil)) + '</th><th class="num">' + esc(hrsNum(sum.training)) + '</th><th class="num">' + esc(hrsNum(sum.total)) + '</th></tr></tfoot></table></div>'
       : '<p class="empty">No hours yet. They start with the training day and the first vigil.</p>') +
     '<p class="hint">Total includes other NODA service. Tap a name for that volunteer’s hours or a service letter.</p>' +
@@ -1742,6 +1884,12 @@ function setTabs(show) {
   document.body.classList.toggle('has-tabs', !!show);
 }
 function render() {
+  navSync();
+  renderNow();
+  fitHeader();
+  fitScrollPad();
+}
+function renderNow() {
   var look = VIEW.name === 'textsize';
   var rs = look ? '' : roleSwitchHTML();
   rolesEl.innerHTML = rs; rolesEl.hidden = !rs;
@@ -1768,7 +1916,88 @@ function render() {
   else html = viewSetup();
   paint(html);
 }
-function go(view, dir) { VIEW = view; UI = {}; navigate(dir || 'forward', function () { render(); window.scrollTo(0, 0); }); }
+function go(view, dir) {
+  VIEW = view; UI = {};
+  if (view.name !== 'home' && dir !== 'back') navPush('screen');
+  navigate(dir || 'forward', function () { render(); window.scrollTo(0, 0); });
+}
+// Version 2.8: history for the phone's Back gesture (phone app only; the Apps Script page runs in a frame).
+function navPush(kind) {
+  if (MODE !== 'pwa' || NAV[kind]) return;
+  try { history.pushState({ noda: kind }, ''); NAV[kind] = true; } catch (e) { /* no history: Back closes the app as before */ }
+}
+// In-app Back: step back through history when this app added that entry, so the two stay in step (popstate below
+// then draws the screen). True if it did.
+function navPop(kind) {
+  if (MODE !== 'pwa' || !NAV[kind]) return false;
+  try { history.back(); return true; } catch (e) { NAV[kind] = false; return false; }
+}
+// Back on a main screen by some other way (a role switch, a finished form): drop the entries left behind, quietly.
+function navSync() {
+  if (MODE !== 'pwa' || NAV.look || VIEW.name !== 'home') return;
+  var drop = 0;
+  if (NAV.screen) { NAV.screen = false; drop++; }
+  if (NAV.tab && TAB === 'vigils') { NAV.tab = false; drop++; }
+  if (drop) { NAV.skip++; try { history.go(-drop); } catch (e) { NAV.skip = 0; } }
+}
+function navDepth() { return (NAV.tab ? 1 : 0) + (NAV.screen ? 1 : 0) + (NAV.look ? 1 : 0); }
+// A new version reloads from the first screen, so no Back entries are left behind for a page that no longer has them.
+function reloadApp() {
+  if (NAV.reload) return;
+  var d = MODE === 'pwa' ? navDepth() : 0;
+  if (d) { NAV.reload = true; try { history.go(-d); return; } catch (e) { NAV.reload = false; } }
+  location.reload();
+}
+window.addEventListener('popstate', function () {
+  if (MODE !== 'pwa') return;
+  if (NAV.reload) { location.reload(); return; }
+  // The app's own clean-up step (navSync): the screen is already right.
+  if (NAV.skip) { NAV.skip--; return; }
+  if (NAV.look) { NAV.look = false; closeLook(); return; }
+  if (NAV.screen) {
+    NAV.screen = false;
+    if (VIEW.name !== 'home') { DRAFT = null; VIEW = { name: 'home' }; UI = {}; navigate('back', function () { render(); window.scrollTo(0, 0); }); }
+    return;
+  }
+  if (NAV.tab) { NAV.tab = false; if (TAB !== 'vigils') { TAB = 'vigils'; VIEW = { name: 'home' }; UI = {}; navigate('tab', function () { render(); window.scrollTo(0, 0); }); } }
+});
+// Version 2.8: large text on a small phone keeps the header to one row, so more of each screen is in sight.
+// Step by step, only as far as needed: a smaller logo and name; then the Text size button shows just "Aa"
+// (its name is still "Text size"); then the logo steps aside.
+function fitHeader() {
+  var top = aaBtn && aaBtn.parentNode, ttl = top && top.querySelector('.ttl');
+  if (!ttl) return;
+  var wraps = function () { return aaBtn.offsetTop >= ttl.offsetTop + ttl.offsetHeight / 2; };
+  void top.offsetHeight;
+  var y = window.scrollY || 0;
+  top.classList.remove('fit1', 'fit2', 'fit3');
+  ['fit1', 'fit2', 'fit3'].some(function (c) { if (!wraps()) return true; top.classList.add(c); return false; });
+  // Trying the roomier header for a moment mustn't move the page (Chrome's scroll anchoring would follow it).
+  if ((window.scrollY || 0) !== y) window.scrollTo(0, y);
+}
+window.addEventListener('resize', function () { fitHeader(); fitScrollPad(); });
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { fitHeader(); });
+// Version 2.8: focus moved by keyboard or switch control never lands under the tab bar or the sticky Send bar.
+function fitScrollPad() {
+  var foot = app.querySelector('.foot'), pad = 0, was = false, loose = false;
+  if (foot) {
+    // A Page bar that would cover too much of the screen (very large text on a small or zoomed phone) stops floating
+    // and waits at the end of the form: past 40% of the screen while the form is incomplete, past 50% once Page works.
+    var send = foot.querySelector('#send'), ready = !!send && !send.disabled;
+    was = foot.classList.contains('loose');
+    loose = foot.offsetHeight > window.innerHeight * (ready ? 0.5 : 0.4);
+    foot.classList.toggle('loose', loose);
+    if (!loose) pad = foot.offsetHeight + 12;
+  } else if (!tabs.hidden) pad = tabs.offsetHeight + 24;
+  document.documentElement.style.scrollPaddingBottom = pad ? pad + 'px' : '';
+  // The bar has just started floating: keep the control in use in sight above it.
+  if (foot && was && !loose) {
+    var a = document.activeElement;
+    if (a && a !== document.body && app.contains(a) && !foot.contains(a) && a.getBoundingClientRect().bottom > foot.getBoundingClientRect().top) {
+      try { a.scrollIntoView({ block: 'nearest' }); } catch (e) { /* older browser */ }
+    }
+  }
+}
 // Re-render after a tap without the screen jumping: the tapped control stays where it was, and keeps focus.
 function keepPlace(el, fn) {
   var act = el.getAttribute('data-act'), key = el.getAttribute('data-t') || el.getAttribute('data-h') || '';
@@ -1788,16 +2017,20 @@ var ACT = {
   tab: function (el) {
     var t = el.getAttribute('data-tab');
     if (t === TAB && VIEW.name === 'home') { window.scrollTo({ top: 0, behavior: REDUCED ? 'auto' : 'smooth' }); return; }
+    // Version 2.8: Back from another tab returns to the first one.
+    if (t === 'vigils' && VIEW.name === 'home' && navPop('tab')) return;
+    if (t !== 'vigils') navPush('tab');
     TAB = t; VIEW = { name: 'home' }; UI = {};
     navigate('tab', function () { render(); window.scrollTo(0, 0); });
   },
-  home: function () { DRAFT = null; go({ name: 'home' }, 'back'); },
+  home: function () { DRAFT = null; if (VIEW.name !== 'home' && navPop('screen')) return; go({ name: 'home' }, 'back'); },
   open: function (el) { go({ name: 'vigil', id: el.getAttribute('data-id') }); },
   'new': function () {
     // Where: what this phone paged with last time, when it still fits the Sheet's lists.
     var last = rnLast() || {}, L = ST.lists;
     var unitOk = ST.units.some(function (u) { return u.id === last.unitId; }), inOk = L.checkIn.indexOf(last.checkIn) >= 0;
-    DRAFT = { crit1: [], crit2: [], consent: false, unitId: unitOk ? last.unitId : ST.units[0].id, checkIn: inOk ? last.checkIn : L.checkIn[0],
+    // Version 2.8: no unit is chosen for a new phone (unless there is only one), so a page can't go to the wrong unit.
+    DRAFT = { crit1: [], crit2: [], consent: false, unitId: unitOk ? last.unitId : ST.units.length === 1 ? ST.units[0].id : '', checkIn: inOk ? last.checkIn : L.checkIn[0],
       ppe: unitOk ? !!last.ppe : false, startIn: 0, windowH: 24, remembered: unitOk };
     go({ name: 'request' });
   },
@@ -1818,11 +2051,8 @@ var ACT = {
   pick: function (el) {
     VIEW = { name: 'vigil', id: el.getAttribute('data-id') };
     UI = { pickStart: +el.getAttribute('data-t'), pickHours: +el.getAttribute('data-h') };
-    navigate('forward', function () {
-      render();
-      var c = document.getElementById('confirm');
-      if (c) { c.scrollIntoView({ block: 'center' }); try { c.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
-    });
+    navPush('screen');
+    navigate('forward', function () { render(); showConfirm(); });
   },
   'pick-start': function (el) { UI.pickStart = +el.getAttribute('data-t'); keepPlace(el, function () { render(); }); },
   'pick-hours': function (el) { UI.pickHours = +el.getAttribute('data-h'); keepPlace(el, function () { render(); }); },
@@ -1881,7 +2111,7 @@ var ACT = {
   // page emails, hours and letters (version 2.2)
   'pe-on': function () { act('setPageEmail', [true]); },
   'pe-on-vol': function (el) { act('pageEmailOn', [el.getAttribute('data-id')]); },
-  myhours: function () { TAB = 'hours'; go({ name: 'home' }); },
+  myhours: function () { navPush('tab'); TAB = 'hours'; go({ name: 'home' }); },
   'ask-letter': function () { act('requestLetter', []); },
   'vol-open': function (el) { var id = el.getAttribute('data-id'); TAB = 'volunteers'; go({ name: 'vol', id: id }); loadDetail(id); },
   'addhours-open': function () { UI.addHours = true; UI.hDraft = null; UI.hErr = ''; UI.fix = null; render(); focusField('h-hours'); },
@@ -1911,6 +2141,18 @@ var ACT = {
   'signout-ask': function () { UI.confirmSignOut = true; render(); },
   'signout-cancel': function () { UI.confirmSignOut = false; render(); },
   signout: function () { signOut(); },
+  // Version 2.8
+  'pause-yes': function () { act('setAvailability', [false], function () { UI = {}; }); },
+  'pause-no': function () { UI = {}; render(); },
+  'others-ask': function () { UI.confirmOthers = true; render(); },
+  'others-no': function () { UI = {}; render(); },
+  'others-keep': function () { NEWPHONE = false; render(); },
+  'others-yes': function () {
+    act('signOutOtherPhones', [pushSaved().id || ''], function (st) {
+      if (st && st.key) { KEY = cleanKey(st.key); LS.set('key', KEY); }
+      NEWPHONE = false; UI = {};
+    });
+  },
   'role-switch': function (el) { switchRoleTo(el.getAttribute('data-role')); }
 };
 app.addEventListener('click', function (e) {
@@ -1929,7 +2171,17 @@ app.addEventListener('change', function (e) {
   if (t.closest('#req')) { updateReq(); return; }
   if (t.name === 'theme') { setTheme(t.value); return; }
   if (t.id === 'ts-range') { setSize(t.value); return; }
-  if (t.id === 'f-avail') { act('setAvailability', [t.checked]); return; }
+  if (t.id === 'f-avail') {
+    // Version 2.8: pausing takes a second tap, so a slip while scrolling doesn't stop someone's pages.
+    if (!t.checked && ST && ST.me && ST.me.onCall) {
+      t.checked = true; UI.confirmPause = true; render();
+      var y = document.querySelector('#pause-ask [data-act="pause-yes"]'); if (y) { try { y.focus(); } catch (e2) { /* no focus */ } }
+      return;
+    }
+    UI.confirmPause = false;
+    act('setAvailability', [t.checked]);
+    return;
+  }
   if (t.id === 'f-pagemail') { act('setPageEmail', [t.checked]); return; }
   if (t.name === 'reason') { UI.reason = t.value; var b = app.querySelector('[data-act="end"]'); if (b) b.disabled = false; }
 });
@@ -1945,6 +2197,8 @@ app.addEventListener('submit', function (e) {
     act('requestVigil', [DRAFT], function (st) {
       LS.set('rnLast', JSON.stringify({ unitId: sent.unitId, checkIn: sent.checkIn, ppe: !!sent.ppe }));
       DRAFT = null; VIEW = { name: 'vigil', id: st.lastCreated }; UI = {}; window.scrollTo(0, 0);
+      // Version 2.8: phones confirm within seconds; show the count without a reload.
+      [20000, 60000].forEach(function (ms) { setTimeout(function () { if (VIEW.name === 'vigil' && VIEW.id === st.lastCreated && autoRefreshOK()) load(); }, ms); });
     });
   } else if (f.id === 'addvol') {
     var p = {
@@ -1994,7 +2248,7 @@ setInterval(function () { if (document.visibilityState === 'visible' && autoRefr
 document.addEventListener('visibilitychange', function () {
   // Version 2.7: a newer version installed while the app was open. Switch to it while the app is out of sight,
   // or on return if that didn't happen, unless something is being typed.
-  if (UPDATED && (document.visibilityState === 'hidden' || !editing())) { location.reload(); return; }
+  if (UPDATED && (document.visibilityState === 'hidden' || !editing())) { reloadApp(); return; }
   if (document.visibilityState !== 'visible') return;
   // A phone can keep the app open for days without reloading it: look for a new version at most once an hour.
   if (PUSH.reg && Date.now() - UPDATE_CHECK > 3600e3) { UPDATE_CHECK = Date.now(); PUSH.reg.update().catch(function () {}); }
@@ -2020,7 +2274,7 @@ function takeFromUrl() {
 }
 function onSwMessage(e) {
   var d = (e && e.data) || {};
-  if (d.type === 'noda-updated') { if (d.version === APP_VERSION) return; UPDATED = true; if (document.visibilityState === 'hidden' || !ST) location.reload(); return; }
+  if (d.type === 'noda-updated') { if (d.version === APP_VERSION) return; UPDATED = true; if (document.visibilityState === 'hidden' || !ST) reloadApp(); return; }
   if (d.type === 'noda-push' && d.kind === 'test') { if (TEST.waiting) testCheckIn(1500); return; }
   if (d.type === 'noda-push') { if (KEY && !BUSY && !editing()) load(); }
   else if (d.type === 'noda-open') { DEEP = /^V-\d{1,9}$/.test(d.vigil || '') ? d.vigil : null; if (KEY) load(); }
@@ -2045,6 +2299,7 @@ function startPWA() {
   }
   var u = takeFromUrl();
   DEEP = u.vigil || null;
+  keepStorage();
   if (u.key) switchKey(u.key); else KEY = cleanKey(LS.get('key'));
   if (KEY.length < 16) KEY = '';
   rolesLoad();
