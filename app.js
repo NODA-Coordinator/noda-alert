@@ -7,7 +7,7 @@
 (function () {
 'use strict';
 var H = 3600e3, MIN = 60e3, DAY = 24 * H;
-var APP_VERSION = '2.9.0';
+var APP_VERSION = '2.9.1';
 var FIREBASE_DIR = './vendor/firebase/12.19.0/';
 var GAS = !!(window.google && google.script && google.script.run);
 var MODE = GAS ? 'gas' : (document.documentElement.getAttribute('data-app') === 'pwa' ? 'pwa' : 'none');
@@ -16,7 +16,7 @@ var KEY = MODE === 'gas' && typeof window.NODA_KEY === 'string' ? window.NODA_KE
 var ST = null, VIEW = { name: 'home' }, TAB = 'vigils', DRAFT = null, BUSY = false, UI = {};
 var PASTE = {}, DEEP = null, LOADING = null;
 var SIGN = { step: 'email' };   // phone app sign-in: 'email' -> 'code' (-> 'role'), or 'paste' for a link
-var PUSH = { busy: false, err: '', fb: null, waiters: [], refreshing: false, lastRefresh: 0, endpoint: '' };
+var PUSH = { busy: false, err: '', fb: null, waiters: [], refreshing: false, sending: false, lastRefresh: 0, endpoint: '' };
 var TEST = {};                   // a test notification waiting for this phone's receipt: {id, waiting, started, tries, timer} or {failed}
 var DETAIL = {};                 // coordinator: one volunteer's hours and history {id, data, loading, err}
 var LETTER = {};                 // coordinator: service letter {id, opts, data, loading, err}
@@ -24,6 +24,10 @@ var LETTER = {};                 // coordinator: service letter {id, opts, data,
 var INSTALL = { evt: null };
 var ROLES = { key: '', list: [], who: '', at: 0 };   // version 2.4: roles this person can switch between on this phone
 var ROLE_FETCH = false;
+// Version 2.9.1: a role switch on its way: {to, raced}. The new role shows the moment it's tapped (its color, tabs and
+// buttons, with placeholder cards) and its screen fills in when the server answers. SWITCHES counts switches started,
+// so an answer that was on its way when one began is known to be for the role this phone left.
+var SWITCH = null, SWITCHES = 0;
 var ROLE_SHORT = { vol: 'Volunteer', rn: 'Charge nurse', coord: 'Coordinator' };
 var ROLE_WORD = { vol: 'a volunteer', rn: 'a charge nurse', coord: 'the NODA coordinator' };
 // Role colors (version 2.4.1): the app takes the color of the role it's in (app.css, html[data-role]). These are the
@@ -371,7 +375,11 @@ function call(fn, args) {
 }
 function load() {
   if (LOADING) return LOADING;
-  LOADING = call('getState', []).then(function (st) { ST = st; render(); afterLoad(); }, function (err) {
+  var k = KEY, n = SWITCHES;
+  // Version 2.9.1: an answer that comes back after a role switch began is for the role this phone left, so it isn't drawn.
+  var old = function () { return k !== KEY || n !== SWITCHES || !!SWITCH; };
+  LOADING = call('getState', []).then(function (st) { if (old()) return; ST = st; render(); afterLoad(); }, function (err) {
+    if (old()) return;
     if (ST) { toast(err && err.message ? err.message : 'Couldn’t refresh. Try again.'); return; }
     app.innerHTML = '<p class="empty">Couldn’t reach NODA Alert. Check your connection and reload. ' + esc(err && err.message ? '(' + err.message + ')' : '') + '</p>' +
       (MODE === 'pwa' ? '<p><button type="button" class="btn" data-act="retry">Try again</button></p>' : '');
@@ -769,9 +777,10 @@ function keepStorage() {
     navigator.storage.persisted().then(function (p) { if (!p) return navigator.storage.persist(); }).catch(function () { /* fine either way */ });
   } catch (e) { /* not available */ }
 }
-function switchKey(k) {
+// moved: the server already moved this phone's notifications to the new sign-in (a role switch, server 2.7.1).
+function switchKey(k, moved) {
   var old = KEY || cleanKey(LS.get('key'));
-  if (old && old !== k) {
+  if (old && old !== k && !moved) {
     var s = pushSaved();
     if (s.on && s.id) { apiCall('unregisterDevice', [s.id], old).catch(function () {}); s.at = 0; pushSave(s); PUSH.lastRefresh = 0; }
   }
@@ -834,27 +843,57 @@ function roleSwitchHTML() {
     '<div class="roles-seg" role="group" aria-labelledby="roles-label">' + ROLES.list.map(function (r) {
       // (Not disabled while the server works: the screen drew then stayed that way after the answer, in 2.6.
       // switchRoleTo already waits its turn, and taps are held off while busy.)
-      return '<button type="button" class="rolebtn" data-act="role-switch" data-role="' + esc(r.role) + '" aria-pressed="' + (r.role === ST.role) + '">' +
+      return '<button type="button" class="rolebtn" data-act="role-switch" data-role="' + esc(r.role) + '" aria-pressed="' + (r.role === (SWITCH ? SWITCH.to : ST.role)) + '">' +
         esc(ROLE_SHORT[r.role]) + '</button>';
     }).join('') + '</div>';
 }
+// Version 2.9.1: one request. The tapped role shows at once; the server switches and, when notifications are on, moves
+// this phone's notifications to the new role in the same request (an older server leaves that to the phone, as before).
 function switchRoleTo(role) {
-  if (BUSY || !ST || !KEY || role === ST.role) return;
-  var k = KEY;
-  BUSY = true; document.body.classList.add('busy'); render();
-  apiCall('switchRole', [ROLES.who, role], k).then(function (r) {
+  if (BUSY || SWITCH || !ST || !KEY || role === ST.role) return;
+  if (PUSH.busy) { toast('One moment: notifications are still being set up on this phone.'); return; }
+  var k = KEY, s = pushSaved();
+  var dev = s.on && s.id ? { pushId: s.id, platform: platformLabel() } : null;
+  SWITCHES++;
+  SWITCH = { to: role, raced: !!PUSH.sending };
+  clearTimeout(TEST.timer);
+  BUSY = true; document.body.classList.add('busy');
+  navigate('tab', function () { render(); window.scrollTo(0, 0); });
+  apiCall('switchRole', [ROLES.who, role, dev], k).then(function (r) {
     if (!r || !r.key || !r.state || r.state.role === 'none') throw new Error('Couldn’t switch. Try again.');
-    switchKey(r.key);   // moves this phone's notifications to the new role
+    var moved = !!(dev && r.device && r.device.moved);
+    switchKey(r.key, moved);
+    // A registration for the role it left was on its way when the switch began: register this phone again.
+    if (moved && (SWITCH.raced || PUSH.sending)) { s = pushSaved(); if (s.on && s.id) { s.at = 0; pushSave(s); } PUSH.lastRefresh = 0; }
+    SWITCH = null;
     ST = r.state; rolesSave(r.roles, r.who || ROLES.who);
-    VIEW = { name: 'home' }; TAB = 'vigils'; UI = {}; DETAIL = {}; LETTER = {}; DRAFT = null;
-    clearTimeout(TEST.timer); TEST = {};
+    if (VIEW.name === 'textsize') { VIEW.back = { name: 'home' }; VIEW.backUI = {}; VIEW.y = 0; } else VIEW = { name: 'home' };
+    TAB = 'vigils'; UI = {}; DETAIL = {}; LETTER = {}; DRAFT = null; TEST = {};
+    BUSY = false; document.body.classList.remove('busy');
+    render(); window.scrollTo(0, 0);
     toast('You’re using NODA as ' + ROLE_WORD[ST.role] + '.');
     afterLoad();
   }, function (err) {
+    SWITCH = null;
+    BUSY = false; document.body.classList.remove('busy');
+    if (TEST.waiting) testCheckIn(1000);
+    navigate('tab', function () { render(); window.scrollTo(0, 0); });
     toast((err && err.message) || 'Couldn’t switch. Try again.');
     ROLES.at = 0; fetchRoles();
-  }).then(function () { BUSY = false; document.body.classList.remove('busy'); navigate('tab', function () { render(); window.scrollTo(0, 0); }); });
+  });
 }
+// While a switch is on its way: the new role's title, tabs and placeholder cards.
+function switchingView(rolesShown) {
+  var to = SWITCH.to, withTabs = to === 'vol' || to === 'coord';
+  whoEl.textContent = roleTitle(to); whoEl.hidden = rolesShown;
+  if (withTabs) { tabs.innerHTML = tabsHTML(to, 'vigils'); tabs.hidden = false; } else { tabs.hidden = true; tabs.innerHTML = ''; }
+  document.body.classList.toggle('has-tabs', withTabs);
+  if (SCREEN === 'switch|' + to && app.hasAttribute('aria-busy')) return;
+  app.innerHTML = '<div class="skel" aria-hidden="true"><i class="sk-title"></i><i class="sk-card"></i><i class="sk-card sk-tall"></i></div>' +
+    '<p class="vh">Switching to ' + esc(ROLE_SHORT[to]) + '…</p>';
+  app.setAttribute('aria-busy', 'true'); SCREEN = 'switch|' + to;
+}
+function roleTitle(role) { return role === 'rn' ? 'Charge nurse' : role === 'coord' ? 'NODA coordinator' : 'Volunteer'; }
 
 /* ---------- phone app: install on the home screen ---------- */
 function isIOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
@@ -1039,12 +1078,15 @@ function testCheck() {
   if (!TEST.waiting || !KEY || !TEST.id) return;
   TEST.tries++;
   var giveUp = function () { return Date.now() - TEST.started > 60000; };
+  var n = SWITCHES;
   call('confirmTestPush', [TEST.id]).then(function (st) {
+    if (n !== SWITCHES) return;   // a role switch began meanwhile (version 2.9.1)
     ST = st;
     if (st.test && st.test.confirmed) { clearTimeout(TEST.timer); TEST = {}; if (st.notice) toast(st.notice); }
     else if (giveUp()) { clearTimeout(TEST.timer); TEST = { failed: true }; }
     else testCheckIn(TEST.tries < 3 ? 4000 : 8000);
   }, function () {
+    if (n !== SWITCHES) return;
     if (giveUp()) { clearTimeout(TEST.timer); TEST = { failed: true }; } else testCheckIn(8000);
   }).then(function () { if (!editing()) render(); });
 }
@@ -1099,10 +1141,16 @@ function fcmUnregister() {
 function fidChanged(fid) {
   var s = pushSaved();
   if (!s.on || !KEY || fid === s.id) return;
+  if (SWITCH) { setTimeout(function () { fidChanged(fid); }, 2000); return; }   // after the role switch (version 2.9.1)
+  var n = SWITCHES;
+  PUSH.sending = true;
   call('registerDevice', [fid, platformLabel()]).then(function (st) {
+    PUSH.sending = false;
     if (s.id) call('unregisterDevice', [s.id]).catch(function () {});
-    pushSave({ on: true, id: fid, at: Date.now(), ep: PUSH.endpoint }); ST = st; if (!editing()) render();
-  }, function () {});
+    // A role switch began meanwhile: this registration was for the role the phone left, so the next refresh redoes it.
+    pushSave({ on: true, id: fid, at: n === SWITCHES ? Date.now() : 0, ep: PUSH.endpoint });
+    if (n === SWITCHES) { ST = st; if (!editing()) render(); }
+  }, function () { PUSH.sending = false; });
 }
 function pushErrText(err) {
   var m = String((err && (err.code || err.message)) || '');
@@ -1161,7 +1209,7 @@ function pushTurnOff() {
 // and notice if notifications were turned off in the phone's settings.
 function pushRefresh() {
   var s = pushSaved();
-  if (MODE !== 'pwa' || PUSH.refreshing || PUSH.busy || !s.on || !KEY || !ST || (ST.role === 'rn' && !(ST.rnPush && ST.rnPush.can))) return;
+  if (MODE !== 'pwa' || SWITCH || PUSH.refreshing || PUSH.busy || !s.on || !KEY || !ST || (ST.role === 'rn' && !(ST.rnPush && ST.rnPush.can))) return;
   var st = pushState();
   if (st === 'unconfigured' || st === 'na' || st === 'ios-install' || st === 'ios-old' || st === 'unsupported') return;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
@@ -1170,22 +1218,35 @@ function pushRefresh() {
     return;
   }
   PUSH.refreshing = true;
+  // Version 2.9.1: once a role switch begins (n !== SWITCHES), this refresh registers nothing more for the role the
+  // phone is leaving and uses none of its answers. PUSH.sending marks a registration on its way, which the switch
+  // can't overtake for sure: then the phone is registered again for its new role afterwards.
+  var n = SWITCHES, stale = function () { return n !== SWITCHES || !!SWITCH; };
+  var register = function (fid) {
+    PUSH.sending = true;
+    return call('registerDevice', [fid, platformLabel()]).then(function (st) { PUSH.sending = false; if (!stale()) ST = st; return st; },
+      function (err) { PUSH.sending = false; throw err; });
+  };
   swReady().then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
     var force = !sub || (s.ep && sub.endpoint !== s.ep);
     return fcmRegister(force).then(function (fid) {
       if (!force && fid === s.id && Date.now() - (s.at || 0) < DAY) return;
-      return call('registerDevice', [fid, platformLabel()]).then(function (st1) {
-        ST = st1;
-        if (s.id && s.id !== fid) call('unregisterDevice', [s.id]).catch(function () {});
-        if (st1.device && st1.device.revived && !force) {
+      if (stale()) return;
+      return register(fid).then(function (st1) {
+        if (s.id && s.id !== fid && !stale()) call('unregisterDevice', [s.id]).catch(function () {});
+        if (st1.device && st1.device.revived && !force && !stale()) {
           // The server had turned this phone off because FCM said it was gone: register it again from scratch.
-          return fcmRegister(true).then(function (fid2) { return call('registerDevice', [fid2, platformLabel()]).then(function (st2) { ST = st2; return fid2; }); });
+          return fcmRegister(true).then(function (fid2) { return register(fid2).then(function () { return fid2; }); });
         }
         return fid;
-      }).then(function (finalId) { pushSave({ on: true, id: finalId, at: Date.now(), ep: PUSH.endpoint }); if (!editing()) render(); });
+      }).then(function (finalId) { pushSave({ on: true, id: finalId, at: stale() ? 0 : Date.now(), ep: PUSH.endpoint }); if (!editing()) render(); });
     });
   }).catch(function () { /* try again next time the app opens */ })
-    .then(function () { PUSH.refreshing = false; PUSH.lastRefresh = Date.now(); });
+    .then(function () {
+      PUSH.refreshing = false; PUSH.lastRefresh = Date.now();
+      // A role switch began meanwhile: check again for the role the phone is in now (it registers only if needed).
+      if (n !== SWITCHES) { PUSH.lastRefresh = 0; if (!SWITCH) pushRefresh(); }
+    });
 }
 
 /* ---------- charge RN ---------- */
@@ -1855,11 +1916,11 @@ function tabList(role) {
   if ((role || ST.role) === 'vol') return [['vigils', 'Vigils', 'heart'], ['shifts', 'My shifts', 'cal'], ['hours', 'My hours', 'clock']];
   return [['vigils', 'Today', 'home'], ['volunteers', 'Volunteers', 'people'], ['report', 'Report', 'chart'], ['links', 'Setup', 'sliders']];
 }
-function tabsHTML(role) {
-  var list = tabList(role);
+function tabsHTML(role, cur) {
+  var list = tabList(role), at = cur || TAB;
   tabs.className = 'tabs n' + list.length;
   return list.map(function (t) {
-    return '<button type="button" class="tab" data-act="tab" data-tab="' + t[0] + '"' + (TAB === t[0] ? ' aria-current="page"' : '') + '>' + svg(t[2], 'tico') + '<span>' + t[1] + '</span></button>';
+    return '<button type="button" class="tab" data-act="tab" data-tab="' + t[0] + '"' + (at === t[0] ? ' aria-current="page"' : '') + '>' + svg(t[2], 'tico') + '<span>' + t[1] + '</span></button>';
   }).join('');
 }
 function backBtn(act, id) { return '<div class="back-row"><button type="button" class="pillbtn back" data-act="' + act + '"' + (id ? ' data-id="' + esc(id) + '"' : '') + '>' + svg('back') + 'Back</button></div>'; }
@@ -2231,16 +2292,17 @@ function renderNow() {
   var look = VIEW.name === 'textsize';
   var rs = look ? '' : roleSwitchHTML();
   rolesEl.innerHTML = rs; rolesEl.hidden = !rs;
-  roleTheme(ST && KEY ? ST.role : '');
+  roleTheme(SWITCH ? SWITCH.to : ST && KEY ? ST.role : '');
   if (aaBtn) aaBtn.setAttribute('aria-pressed', String(look));
   if (look) { setTabs(false); paint(lookView()); return; }
   whoEl.hidden = false;
+  if (SWITCH && KEY) { switchingView(!!rs); return; }
   if (MODE === 'pwa' && !KEY) { whoEl.textContent = 'Sign in'; setTabs(false); paint(signInView()); return; }
   if (!ST) return;
   if (ST.role === 'none') { whoEl.textContent = MODE === 'pwa' ? 'Sign in' : 'Link not active'; setTabs(false); paint(noneView()); return; }
   if (LS.get('lastRole') !== ST.role) LS.set('lastRole', ST.role);
   // The role under the name; the role switch says it instead for people on more than one list.
-  whoEl.textContent = ST.role === 'rn' ? 'Charge nurse' : ST.role === 'coord' ? 'NODA coordinator' : 'Volunteer';
+  whoEl.textContent = roleTitle(ST.role);
   whoEl.hidden = !!rs;
   // Tabs show on each tab's main screen; a screen you step into (signing up, a request, a volunteer) has Back instead.
   if (ST.role === 'vol' && ['vigils', 'shifts', 'hours'].indexOf(TAB) < 0) TAB = 'vigils';
@@ -2353,6 +2415,7 @@ function copyText(text, input) {
 }
 var ACT = {
   tab: function (el) {
+    if (SWITCH) return;
     var t = el.getAttribute('data-tab');
     if (t === TAB && VIEW.name === 'home') { window.scrollTo({ top: 0, behavior: REDUCED ? 'auto' : 'smooth' }); return; }
     // Version 2.8: Back from another tab returns to the first one.
